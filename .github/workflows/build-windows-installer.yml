@@ -57,10 +57,15 @@ jobs:
           $sdkRoot = Join-Path "${env:ProgramFiles(x86)}" "Windows Kits\10"
           $sdkRefs = Join-Path $sdkRoot "References"
           $sdkVersion = $null
+          $contractWinmd = $null
           if (Test-Path $sdkRefs) {
-            $sdkVersion = Get-ChildItem -Path $sdkRefs -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } | Where-Object {
-              Test-Path (Join-Path $_.FullName "Windows.Foundation.UniversalApiContract\10.0.0.0\Windows.Foundation.UniversalApiContract.winmd")
-            } | Sort-Object Name -Descending | Select-Object -First 1 -ExpandProperty Name
+            $contractWinmd = Get-ChildItem -Path $sdkRefs -Recurse -Filter Windows.Foundation.UniversalApiContract.winmd -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($contractWinmd) {
+              $contractDir = Split-Path $contractWinmd.FullName -Parent
+              $apiContractRoot = Split-Path $contractDir -Parent
+              $sdkVersionDir = Split-Path $apiContractRoot -Parent
+              $sdkVersion = Split-Path $sdkVersionDir -Leaf
+            }
           }
           if (-not $sdkVersion) { throw "Windows SDK reference assemblies not found under $sdkRefs" }
           "WINDOWS_SDK_VERSION=$sdkVersion" | Out-File -FilePath $env:GITHUB_ENV -Append
