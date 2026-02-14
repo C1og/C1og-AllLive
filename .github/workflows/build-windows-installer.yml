@@ -22,11 +22,11 @@ jobs:
           $installPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
           if (-not $installPath) { throw "Visual Studio not found." }
           $vsInstaller = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
-          & $vsInstaller modify --installPath "$installPath" --add Microsoft.VisualStudio.Workload.UniversalBuildTools --add Microsoft.VisualStudio.Component.Windows10SDK.19041 --add Microsoft.VisualStudio.ComponentGroup.UWP.VC --includeRecommended --passive --norestart
+          & $vsInstaller modify --installPath "$installPath" --add Microsoft.VisualStudio.Workload.Universal --add Microsoft.VisualStudio.Component.Windows10SDK.19041 --add Microsoft.VisualStudio.ComponentGroup.UWP.VC --includeRecommended --passive --norestart --wait
       - uses: microsoft/setup-msbuild@v2
       - name: Build UWP app package
         shell: pwsh
-        run: msbuild AllLive.UWP\AllLive.UWP.csproj /restore /p:Configuration=Release /p:Platform=x64 /p:GenerateAppxPackageOnBuild=true /p:UapAppxPackageBuildMode=SideloadOnly /p:AppxBundle=Never /p:AppxPackageSigningEnabled=false /p:AppxPackageDir=AppPackages\
+        run: msbuild AllLive.UWP\AllLive.UWP.csproj /restore /p:Configuration=Release /p:Platform=x64 /p:VisualStudioVersion=17.0 /p:GenerateAppxPackageOnBuild=true /p:UapAppxPackageBuildMode=SideloadOnly /p:AppxBundle=Never /p:AppxPackageSigningEnabled=false /p:AppxPackageDir=AppPackages\
       - name: Upload app package
         uses: actions/upload-artifact@v4
         with:
