@@ -36,6 +36,11 @@ namespace AllLive.UWP.ViewModels
         {
             _Command((T)parameter);
         }
+
+        public void RaiseCanExecuteChanged()
+        {
+            CanExecuteChanged?.Invoke(this, EventArgs.Empty);
+        }
     }
     public class RelayCommand : ICommand
     {
@@ -65,6 +70,11 @@ namespace AllLive.UWP.ViewModels
         public void Execute(object parameter)
         {
             _Command();
+        }
+
+        public void RaiseCanExecuteChanged()
+        {
+            CanExecuteChanged?.Invoke(this, EventArgs.Empty);
         }
     }
 }

@@ -48,7 +48,7 @@ namespace AllLive.Core.Helper
                 result = respPack.Get<Resp>("tRsp", result);
                 return result;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 return result;
             }
