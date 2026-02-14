@@ -29,13 +29,27 @@ jobs:
         run: |
           $sdkRoot = Join-Path "${env:ProgramFiles(x86)}" "Windows Kits\10"
           $sdkRefs = Join-Path $sdkRoot "References"
-          if (-not (Test-Path $sdkRefs)) {
+          function Test-UwpReferences([string]$refsRoot) {
+            if (-not (Test-Path $refsRoot)) { return $false }
+            $winmd = Get-ChildItem -Path $refsRoot -Recurse -Filter Windows.Foundation.UniversalApiContract.winmd -ErrorAction SilentlyContinue | Select-Object -First 1
+            return [bool]$winmd
+          }
+          if (-not (Test-UwpReferences $sdkRefs)) {
             $installer = Join-Path $env:RUNNER_TEMP "winsdksetup.exe"
             $sdkUrl = "https://go.microsoft.com/fwlink/?linkid=2120843"
             Invoke-WebRequest -Uri $sdkUrl -OutFile $installer
-            Start-Process -FilePath $installer -ArgumentList "/Quiet /NoRestart" -Wait
+            $args = "/quiet /norestart /features OptionId.UWPManaged OptionId.UWPNative"
+            $process = Start-Process -FilePath $installer -ArgumentList $args -Wait -PassThru
+            if ($process.ExitCode -ne 0) {
+              $process = Start-Process -FilePath $installer -ArgumentList "/quiet /norestart" -Wait -PassThru
+              if ($process.ExitCode -ne 0) { throw "Windows SDK installer failed with exit code $($process.ExitCode)" }
+            }
           }
-          if (-not (Test-Path $sdkRefs)) { throw "Windows SDK reference assemblies still missing under $sdkRefs" }
+          if (-not (Test-UwpReferences $sdkRefs)) {
+            "Windows SDK references still missing. Available references:"
+            Get-ChildItem -Path $sdkRefs -Directory -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+            throw "Windows SDK reference assemblies still missing under $sdkRefs"
+          }
       - uses: microsoft/setup-msbuild@v2
       - name: Resolve Windows SDK version
         shell: pwsh
@@ -69,6 +83,9 @@ jobs:
             $winmd = Get-ChildItem -Path $sdkRoot -Recurse -Filter Windows.winmd -ErrorAction SilentlyContinue | Select-Object -First 5
             "WindowsWinmd:"
             $winmd.FullName
+            $contractWinmd = Get-ChildItem -Path (Join-Path $sdkRoot "References") -Recurse -Filter Windows.Foundation.UniversalApiContract.winmd -ErrorAction SilentlyContinue | Select-Object -First 5
+            "UniversalApiContractWinmd:"
+            $contractWinmd.FullName
           } else {
             "WindowsSDKRoot not found."
           }
