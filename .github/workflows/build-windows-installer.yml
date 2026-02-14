@@ -21,20 +21,30 @@ jobs:
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           $installPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
           if (-not $installPath) { throw "Visual Studio not found." }
+          "VSINSTALLPATH=$installPath" | Out-File -FilePath $env:GITHUB_ENV -Append
           $vsInstaller = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
           & $vsInstaller modify --installPath "$installPath" --add Microsoft.VisualStudio.Workload.Universal --add Microsoft.VisualStudio.Component.Windows10SDK.19041 --add Microsoft.VisualStudio.ComponentGroup.UWP.VC --includeRecommended --passive --norestart --wait
       - uses: microsoft/setup-msbuild@v2
+      - name: Resolve Windows SDK version
+        shell: pwsh
+        run: |
+          $sdkRoot = Join-Path "${env:ProgramFiles(x86)}" "Windows Kits\10"
+          $sdkLib = Join-Path $sdkRoot "Lib"
+          $sdkVersion = Get-ChildItem -Path $sdkLib -Directory | Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } | Sort-Object Name -Descending | Select-Object -First 1 -ExpandProperty Name
+          if (-not $sdkVersion) { throw "Windows SDK version not found under $sdkLib" }
+          "WINDOWS_SDK_VERSION=$sdkVersion" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "WINDOWS_SDK_DIR=$sdkRoot\" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Diagnose UWP SDK and XAML targets
         shell: pwsh
         run: |
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $installPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
-          "VSInstallPath=$installPath"
-          $xamlTargets = Get-ChildItem -Path $installPath -Recurse -Filter Microsoft.Windows.UI.Xaml.CSharp.targets -ErrorAction SilentlyContinue | Select-Object -First 5
+          "VSInstallPath=$env:VSINSTALLPATH"
+          $xamlTargets = Get-ChildItem -Path $env:VSINSTALLPATH -Recurse -Filter Microsoft.Windows.UI.Xaml.CSharp.targets -ErrorAction SilentlyContinue | Select-Object -First 5
           "WindowsXamlTargets:"
           $xamlTargets.FullName
           "WindowsSdkDir=$env:WindowsSdkDir"
           "WindowsSDKVersion=$env:WindowsSDKVersion"
+          "ResolvedWindowsSdkDir=$env:WINDOWS_SDK_DIR"
+          "ResolvedWindowsSDKVersion=$env:WINDOWS_SDK_VERSION"
           $sdkRoot = Join-Path "${env:ProgramFiles(x86)}" "Windows Kits\10"
           if (Test-Path $sdkRoot) {
             "WindowsSDKRoot=$sdkRoot"
@@ -46,8 +56,10 @@ jobs:
             "WindowsSDKRoot not found."
           }
       - name: Build UWP app package
-        shell: pwsh
-        run: msbuild AllLive.UWP\AllLive.UWP.csproj /restore /p:Configuration=Release /p:Platform=x64 /p:VisualStudioVersion=17.0 /p:GenerateAppxPackageOnBuild=true /p:UapAppxPackageBuildMode=SideloadOnly /p:AppxBundle=Never /p:AppxPackageSigningEnabled=false /p:AppxPackageDir=AppPackages\
+        shell: cmd
+        run: |
+          call "%VSINSTALLPATH%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          msbuild AllLive.UWP\AllLive.UWP.csproj /restore /p:Configuration=Release /p:Platform=x64 /p:VisualStudioVersion=17.0 /p:WindowsSdkDir="%WINDOWS_SDK_DIR%" /p:WindowsSDKVersion=%WINDOWS_SDK_VERSION%\ /p:TargetPlatformVersion=%WINDOWS_SDK_VERSION% /p:TargetPlatformMinVersion=10.0.18362.0 /p:GenerateAppxPackageOnBuild=true /p:UapAppxPackageBuildMode=SideloadOnly /p:AppxBundle=Never /p:AppxPackageSigningEnabled=false /p:AppxPackageDir=AppPackages\
       - name: Upload app package
         uses: actions/upload-artifact@v4
         with:
