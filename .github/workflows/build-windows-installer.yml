@@ -23,16 +23,31 @@ jobs:
           if (-not $installPath) { throw "Visual Studio not found." }
           "VSINSTALLPATH=$installPath" | Out-File -FilePath $env:GITHUB_ENV -Append
           $vsInstaller = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
-          & $vsInstaller modify --installPath "$installPath" --add Microsoft.VisualStudio.Workload.Universal --add Microsoft.VisualStudio.Component.Windows10SDK.19041 --add Microsoft.VisualStudio.ComponentGroup.UWP.VC --includeRecommended --passive --norestart --wait
+          & $vsInstaller modify --installPath "$installPath" --add Microsoft.VisualStudio.Workload.Universal --add Microsoft.VisualStudio.Component.Windows10SDK.19041 --add Microsoft.VisualStudio.ComponentGroup.UWP.VC --includeRecommended --includeOptional --passive --norestart --wait
+      - name: Ensure Windows SDK references
+        shell: pwsh
+        run: |
+          $sdkRoot = Join-Path "${env:ProgramFiles(x86)}" "Windows Kits\10"
+          $sdkRefs = Join-Path $sdkRoot "References"
+          if (-not (Test-Path $sdkRefs)) {
+            $installer = Join-Path $env:RUNNER_TEMP "winsdksetup.exe"
+            $sdkUrl = "https://go.microsoft.com/fwlink/?linkid=2120843"
+            Invoke-WebRequest -Uri $sdkUrl -OutFile $installer
+            Start-Process -FilePath $installer -ArgumentList "/Quiet /NoRestart" -Wait
+          }
+          if (-not (Test-Path $sdkRefs)) { throw "Windows SDK reference assemblies still missing under $sdkRefs" }
       - uses: microsoft/setup-msbuild@v2
       - name: Resolve Windows SDK version
         shell: pwsh
         run: |
           $sdkRoot = Join-Path "${env:ProgramFiles(x86)}" "Windows Kits\10"
           $sdkRefs = Join-Path $sdkRoot "References"
-          $sdkVersion = Get-ChildItem -Path $sdkRefs -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } | Where-Object {
-            Test-Path (Join-Path $_.FullName "Windows.Foundation.UniversalApiContract\10.0.0.0\Windows.Foundation.UniversalApiContract.winmd")
-          } | Sort-Object Name -Descending | Select-Object -First 1 -ExpandProperty Name
+          $sdkVersion = $null
+          if (Test-Path $sdkRefs) {
+            $sdkVersion = Get-ChildItem -Path $sdkRefs -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } | Where-Object {
+              Test-Path (Join-Path $_.FullName "Windows.Foundation.UniversalApiContract\10.0.0.0\Windows.Foundation.UniversalApiContract.winmd")
+            } | Sort-Object Name -Descending | Select-Object -First 1 -ExpandProperty Name
+          }
           if (-not $sdkVersion) { throw "Windows SDK reference assemblies not found under $sdkRefs" }
           "WINDOWS_SDK_VERSION=$sdkVersion" | Out-File -FilePath $env:GITHUB_ENV -Append
           "WINDOWS_SDK_DIR=$sdkRoot\" | Out-File -FilePath $env:GITHUB_ENV -Append
