@@ -29,9 +29,11 @@ jobs:
         shell: pwsh
         run: |
           $sdkRoot = Join-Path "${env:ProgramFiles(x86)}" "Windows Kits\10"
-          $sdkLib = Join-Path $sdkRoot "Lib"
-          $sdkVersion = Get-ChildItem -Path $sdkLib -Directory | Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } | Sort-Object Name -Descending | Select-Object -First 1 -ExpandProperty Name
-          if (-not $sdkVersion) { throw "Windows SDK version not found under $sdkLib" }
+          $sdkRefs = Join-Path $sdkRoot "References"
+          $sdkVersion = Get-ChildItem -Path $sdkRefs -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } | Where-Object {
+            Test-Path (Join-Path $_.FullName "Windows.Foundation.UniversalApiContract\10.0.0.0\Windows.Foundation.UniversalApiContract.winmd")
+          } | Sort-Object Name -Descending | Select-Object -First 1 -ExpandProperty Name
+          if (-not $sdkVersion) { throw "Windows SDK reference assemblies not found under $sdkRefs" }
           "WINDOWS_SDK_VERSION=$sdkVersion" | Out-File -FilePath $env:GITHUB_ENV -Append
           "WINDOWS_SDK_DIR=$sdkRoot\" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Diagnose UWP SDK and XAML targets
@@ -58,8 +60,13 @@ jobs:
       - name: Build UWP app package
         shell: cmd
         run: |
-          call "%VSINSTALLPATH%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
-          msbuild AllLive.UWP\AllLive.UWP.csproj /restore /p:Configuration=Release /p:Platform=x64 /p:VisualStudioVersion=17.0 /p:WindowsSdkDir="%WINDOWS_SDK_DIR%" /p:WindowsSDKVersion=%WINDOWS_SDK_VERSION%\ /p:TargetPlatformVersion=%WINDOWS_SDK_VERSION% /p:TargetPlatformMinVersion=10.0.18362.0 /p:GenerateAppxPackageOnBuild=true /p:UapAppxPackageBuildMode=SideloadOnly /p:AppxBundle=Never /p:AppxPackageSigningEnabled=false /p:AppxPackageDir=AppPackages\
+          call "%VSINSTALLPATH%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 -winsdk=%WINDOWS_SDK_VERSION%
+          set WindowsSdkDir=%WINDOWS_SDK_DIR%
+          set WindowsSDKVersion=%WINDOWS_SDK_VERSION%\
+          set MSBuildExtensionsPath=%VSINSTALLPATH%\MSBuild
+          set MSBuildExtensionsPath32=%VSINSTALLPATH%\MSBuild
+          set MSBuildExtensionsPath64=%VSINSTALLPATH%\MSBuild
+          "%VSINSTALLPATH%\MSBuild\Current\Bin\MSBuild.exe" AllLive.UWP\AllLive.UWP.csproj /restore /p:Configuration=Release /p:Platform=x64 /p:VisualStudioVersion=17.0 /p:WindowsSdkDir="%WINDOWS_SDK_DIR%" /p:WindowsSDKVersion=%WINDOWS_SDK_VERSION%\ /p:TargetPlatformVersion=%WINDOWS_SDK_VERSION% /p:TargetPlatformMinVersion=10.0.18362.0 /p:GenerateAppxPackageOnBuild=true /p:UapAppxPackageBuildMode=SideloadOnly /p:AppxBundle=Never /p:AppxPackageSigningEnabled=false /p:AppxPackageDir=AppPackages\
       - name: Upload app package
         uses: actions/upload-artifact@v4
         with:
