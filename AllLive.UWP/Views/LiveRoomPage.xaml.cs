@@ -67,6 +67,8 @@ namespace AllLive.UWP.Views
         private string lastProbeSnapshot;
         private string diagnosticsSnapshot;
         private Task diagnosticsSnapshotTask;
+        private DateTimeOffset? lastHuyaRefreshUtc;
+        private static readonly TimeSpan HuyaRefreshCooldown = TimeSpan.FromSeconds(30);
 
         public LiveRoomPage()
         {
@@ -190,6 +192,10 @@ namespace AllLive.UWP.Views
         {
             await this.Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, () =>
             {
+                if (TryRefreshHuyaPlayUrls("播放结束"))
+                {
+                    return;
+                }
                 var index = liveRoomVM.Lines.IndexOf(liveRoomVM.CurrentLine);
                 //尝试切换
                 if (index == liveRoomVM.Lines.Count - 1)
@@ -1082,6 +1088,10 @@ namespace AllLive.UWP.Views
             {
                 return;
             }
+            if (TryRefreshHuyaPlayUrls("播放失败"))
+            {
+                return;
+            }
             // 当前线路播放失败，尝试下一个线路
             var index = liveRoomVM.Lines.IndexOf(liveRoomVM.CurrentLine);
             if (index == liveRoomVM.Lines.Count - 1)
@@ -1094,6 +1104,27 @@ namespace AllLive.UWP.Views
             {
                 liveRoomVM.CurrentLine = liveRoomVM.Lines[index + 1];
             }
+        }
+
+        private bool TryRefreshHuyaPlayUrls(string reason)
+        {
+            if (liveRoomVM == null || liveRoomVM.SiteName != "虎牙直播")
+            {
+                return false;
+            }
+            if (liveRoomVM.CurrentQuality == null)
+            {
+                return false;
+            }
+            var now = DateTimeOffset.UtcNow;
+            if (lastHuyaRefreshUtc.HasValue && (now - lastHuyaRefreshUtc.Value) < HuyaRefreshCooldown)
+            {
+                return false;
+            }
+            lastHuyaRefreshUtc = now;
+            LogHelper.Log($"虎牙播放异常，尝试刷新播放地址。原因: {reason}", LogType.DEBUG);
+            liveRoomVM.LoadPlayUrl();
+            return true;
         }
 
         private void StopPlay()

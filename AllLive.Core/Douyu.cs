@@ -157,8 +157,50 @@ namespace AllLive.Core
             html = Regex.Match(html, @"(vdwdae325w_64we[\s\S]*function ub98484234[\s\S]*?)function").Groups[1].Value;
             html = Regex.Replace(html, @"eval.*?;}", "strc;}");
             var vaa= Environment.CurrentDirectory ;
-            
-#if WINDOWS_UWP
+
+            if (IsUwpRuntime())
+            {
+                return await GetPlayArgsByService(html, rid);
+            }
+
+#if !WINDOWS_UWP
+            try
+            {
+                using (QuickJSRuntime runtime = new QuickJSRuntime())
+                using (QuickJSContext context = runtime.CreateContext())
+                {
+                    var did = "10000000000000000000000000001501";
+                    var time = Core.Helper.Utils.GetTimestamp();
+
+                    context.Eval(html, "", JSEvalFlags.Global);
+                    //调用ub98484234函数，返回格式化后的js
+                    var jsCode = context.Eval("ub98484234()", "", JSEvalFlags.Global).ToString();
+
+                    var v = Regex.Match(jsCode, @"v=(\d+)").Groups[1].Value;
+                    //对参数进行MD5，替换掉JS的CryptoJS\.MD5
+                    var rb = Core.Helper.Utils.ToMD5(rid + did + time + v);
+
+                    var jsCode2 = Regex.Replace(jsCode, @"return rt;}\);?", "return rt;}");
+                    //设置方法名为sign
+                    jsCode2 = Regex.Replace(jsCode2, @"\(function \(", "function sign(");
+                    //将JS中的MD5方法直接替换成加密完成的rb
+                    jsCode2 = Regex.Replace(jsCode2, @"CryptoJS\.MD5\(cb\)\.toString\(\)", $@"""{rb}""");
+                    context.Eval(jsCode2, "", JSEvalFlags.Global);
+                    //返回参数
+                    var args = context.Eval($"sign('{rid}','{did}','{time}')", "", JSEvalFlags.Global).ToString();
+                    return args;
+                }
+            }
+            catch
+            {
+                // fallback to service
+            }
+#endif
+            return await GetPlayArgsByService(html, rid);
+        }
+
+        private static async Task<string> GetPlayArgsByService(string html, string rid)
+        {
             var jsonObj = new
             {
                 html = html,
@@ -171,32 +213,18 @@ namespace AllLive.Core
                 return obj["data"].ToString();
             }
             return "";
-#else
-            using (QuickJSRuntime runtime = new QuickJSRuntime())
-            using (QuickJSContext context = runtime.CreateContext())
+        }
+
+        private static bool IsUwpRuntime()
+        {
+            try
             {
-                var did = "10000000000000000000000000001501";
-                var time = Core.Helper.Utils.GetTimestamp();
-
-                context.Eval(html, "", JSEvalFlags.Global);
-                //调用ub98484234函数，返回格式化后的js
-                var jsCode = context.Eval("ub98484234()", "", JSEvalFlags.Global).ToString();
-
-                var v = Regex.Match(jsCode, @"v=(\d+)").Groups[1].Value;
-                //对参数进行MD5，替换掉JS的CryptoJS\.MD5
-                var rb = Core.Helper.Utils.ToMD5(rid + did + time + v);
-
-                var jsCode2 = Regex.Replace(jsCode, @"return rt;}\);?", "return rt;}");
-                //设置方法名为sign
-                jsCode2 = Regex.Replace(jsCode2, @"\(function \(", "function sign(");
-                //将JS中的MD5方法直接替换成加密完成的rb
-                jsCode2 = Regex.Replace(jsCode2, @"CryptoJS\.MD5\(cb\)\.toString\(\)", $@"""{rb}""");
-                context.Eval(jsCode2, "", JSEvalFlags.Global);
-                //返回参数
-                var args = context.Eval($"sign('{rid}','{did}','{time}')", "", JSEvalFlags.Global).ToString();
-                return args;
+                return Type.GetType("Windows.ApplicationModel.Package, Windows, ContentType=WindowsRuntime") != null;
             }
-#endif
+            catch
+            {
+                return false;
+            }
         }
 
         public async Task<LiveSearchResult> Search(string keyword, int page = 1)
