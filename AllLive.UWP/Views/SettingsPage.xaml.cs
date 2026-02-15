@@ -1,4 +1,5 @@
 ﻿using AllLive.UWP.Helper;
+using AllLive.Core.Helper;
 using AllLive.UWP.ViewModels;
 using Microsoft.Toolkit.Uwp.Helpers;
 using Microsoft.UI.Xaml.Controls;
@@ -130,6 +131,19 @@ namespace AllLive.UWP.Views
                 });
             });
 
+            //斗鱼签名服务地址
+            txtDouyuSignUrl.Text = SettingHelper.GetValue<string>(SettingHelper.DOUYU_SIGN_URL, "");
+            ApplyDouyuSignServiceSetting(txtDouyuSignUrl.Text);
+            txtDouyuSignUrl.Loaded += new RoutedEventHandler((sender, e) =>
+            {
+                txtDouyuSignUrl.TextChanged += new TextChangedEventHandler((obj, args) =>
+                {
+                    var value = txtDouyuSignUrl.Text?.Trim() ?? "";
+                    SettingHelper.SetValue(SettingHelper.DOUYU_SIGN_URL, value);
+                    ApplyDouyuSignServiceSetting(value);
+                });
+            });
+
             numFontsize.Value = SettingHelper.GetValue<double>(SettingHelper.MESSAGE_FONTSIZE, 14.0);
             numFontsize.Loaded += new RoutedEventHandler((sender, e) =>
             {
@@ -185,6 +199,12 @@ namespace AllLive.UWP.Views
             }
            
         }
+
+        private static void ApplyDouyuSignServiceSetting(string value)
+        {
+            CoreConfig.SetDouyuSignServiceUrl(value);
+        }
+
         protected override void OnNavigatedTo(NavigationEventArgs e)
         {
             base.OnNavigatedTo(e);

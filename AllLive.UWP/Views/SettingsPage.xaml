@@ -139,6 +139,25 @@
                             </ComboBox.Items>
                         </ComboBox>
                     </Grid>
+                    <Grid
+                        x:Name="SettingsDouyuSign"
+                        Margin="0,8,0,0"
+                        Padding="8,12"
+                        Background="{ThemeResource LayerFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="4">
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock>斗鱼签名服务</TextBlock>
+                            <TextBlock FontSize="12" Foreground="Gray">本机示例：http://127.0.0.1:8788/api/douyu/sign</TextBlock>
+                        </StackPanel>
+                        <TextBox
+                            x:Name="txtDouyuSignUrl"
+                            Width="360"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center"
+                            PlaceholderText="留空使用默认" />
+                    </Grid>
                     <TextBlock Margin="4,12" FontSize="18">账号</TextBlock>
                     <Grid
                         Padding="8,12"

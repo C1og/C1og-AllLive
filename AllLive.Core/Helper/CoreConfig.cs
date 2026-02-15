@@ -1,0 +1,46 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace AllLive.Core.Helper
+{
+    public static class CoreConfig
+    {
+        private static readonly object _lock = new object();
+        private static List<string> _douyuSignServiceUrls = new List<string>();
+
+        public static IReadOnlyList<string> GetDouyuSignServiceUrls()
+        {
+            lock (_lock)
+            {
+                return _douyuSignServiceUrls.ToList();
+            }
+        }
+
+        public static void SetDouyuSignServiceUrls(IEnumerable<string> urls)
+        {
+            var list = (urls ?? Enumerable.Empty<string>())
+                .Select(x => x?.Trim())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            lock (_lock)
+            {
+                _douyuSignServiceUrls = list;
+            }
+        }
+
+        public static void SetDouyuSignServiceUrl(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                SetDouyuSignServiceUrls(Array.Empty<string>());
+                return;
+            }
+            var urls = value
+                .Split(new[] { ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(x => x.Trim());
+            SetDouyuSignServiceUrls(urls);
+        }
+    }
+}

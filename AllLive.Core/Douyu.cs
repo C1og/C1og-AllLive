@@ -293,41 +293,91 @@ namespace AllLive.Core
             };
             var payload = Newtonsoft.Json.JsonConvert.SerializeObject(jsonObj);
             CoreDebug.Log($"[Douyu] 调用签名服务 reason={reason} payloadLen={payload.Length}");
-            try
+            foreach (var url in GetSignServiceUrls())
             {
-                using (var client = new HttpClient())
+                try
                 {
-                    client.Timeout = TimeSpan.FromSeconds(10);
-                    var start = DateTimeOffset.UtcNow;
-                    using (var content = new StringContent(payload, Encoding.UTF8, "application/json"))
-                    using (var response = await client.PostAsync("http://alive.nsapps.cn/api/AllLive/DouyuSign", content))
+                    using (var client = new HttpClient())
                     {
-                        var body = await response.Content.ReadAsStringAsync();
-                        var elapsedMs = (DateTimeOffset.UtcNow - start).TotalMilliseconds;
-                        CoreDebug.Log($"[Douyu] 签名服务 status={(int)response.StatusCode} {response.ReasonPhrase} elapsedMs={elapsedMs:F0} bodyLen={body?.Length ?? 0}");
-                        if (!response.IsSuccessStatusCode)
+                        client.Timeout = url.Contains("127.0.0.1") || url.Contains("localhost")
+                            ? TimeSpan.FromSeconds(2)
+                            : TimeSpan.FromSeconds(10);
+                        var start = DateTimeOffset.UtcNow;
+                        using (var content = new StringContent(payload, Encoding.UTF8, "application/json"))
+                        using (var response = await client.PostAsync(url, content))
                         {
-                            CoreDebug.Log($"[Douyu] 签名服务非200 bodyHead={TrimForLog(body)}");
-                            return "";
+                            var body = await response.Content.ReadAsStringAsync();
+                            var elapsedMs = (DateTimeOffset.UtcNow - start).TotalMilliseconds;
+                            CoreDebug.Log($"[Douyu] 签名服务 url={url} status={(int)response.StatusCode} {response.ReasonPhrase} elapsedMs={elapsedMs:F0} bodyLen={body?.Length ?? 0}");
+                            if (!response.IsSuccessStatusCode)
+                            {
+                                CoreDebug.Log($"[Douyu] 签名服务非200 url={url} bodyHead={TrimForLog(body)}");
+                                continue;
+                            }
+                            var obj = JObject.Parse(body);
+                            var code = obj["code"].ToInt32();
+                            var data = obj["data"]?.ToString();
+                            var msg = obj["msg"]?.ToString();
+                            CoreDebug.Log($"[Douyu] 签名服务 url={url} code={code} msg={msg} dataLen={data?.Length ?? 0}");
+                            if (code == 0)
+                            {
+                                return data;
+                            }
                         }
-                        var obj = JObject.Parse(body);
-                        var code = obj["code"].ToInt32();
-                        var data = obj["data"]?.ToString();
-                        var msg = obj["msg"]?.ToString();
-                        CoreDebug.Log($"[Douyu] 签名服务 code={code} msg={msg} dataLen={data?.Length ?? 0}");
-                        if (code == 0)
-                        {
-                            return data;
-                        }
-                        return "";
                     }
                 }
+                catch (Exception ex)
+                {
+                    CoreDebug.Log($"[Douyu] 签名服务异常 url={url} rid={rid} err={ex.GetType().FullName} 0x{ex.HResult:X8} {ex.Message}");
+                }
             }
-            catch (Exception ex)
+            return "";
+        }
+
+        private static IEnumerable<string> GetSignServiceUrls()
+        {
+            try
             {
-                CoreDebug.Log($"[Douyu] 签名服务异常 rid={rid} err={ex.GetType().FullName} 0x{ex.HResult:X8} {ex.Message}");
-                return "";
+                var configured = CoreConfig.GetDouyuSignServiceUrls();
+                if (configured != null && configured.Count > 0)
+                {
+                    return configured;
+                }
             }
+            catch
+            {
+            }
+
+            var urls = new List<string>();
+            if (!IsUwpRuntime())
+            {
+                try
+                {
+                    var env = Environment.GetEnvironmentVariable("ALLLIVE_DOUYU_SIGN_URL");
+                    if (!string.IsNullOrWhiteSpace(env))
+                    {
+                        urls.AddRange(SplitUrls(env));
+                    }
+                }
+                catch
+                {
+                }
+            }
+            urls.Add("http://127.0.0.1:8788/api/douyu/sign");
+            urls.Add("http://alive.nsapps.cn/api/AllLive/DouyuSign");
+            return urls.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct();
+        }
+
+        private static IEnumerable<string> SplitUrls(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return Array.Empty<string>();
+            }
+            return raw
+                .Split(new[] { ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(x => x.Trim())
+                .Where(x => !string.IsNullOrWhiteSpace(x));
         }
 
         private static string TrimForLog(string value, int maxLen = 200)

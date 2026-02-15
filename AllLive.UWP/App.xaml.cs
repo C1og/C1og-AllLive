@@ -1,4 +1,5 @@
 ﻿using AllLive.UWP.Helper;
+using AllLive.Core.Helper;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -35,6 +36,7 @@ namespace AllLive.UWP
         {
 
             this.InitializeComponent();
+            ApplyDouyuSignServiceSetting();
             AllLive.Core.Helper.CoreDebug.Logger = message => LogHelper.Log(message, LogType.DEBUG);
             if (Utils.IsXbox && SettingHelper.GetValue<int>(SettingHelper.XBOX_MODE, 0) == 0)
             {
@@ -43,6 +45,12 @@ namespace AllLive.UWP
 
             App.Current.UnhandledException += App_UnhandledException;
             this.Suspending += OnSuspending;
+        }
+
+        private static void ApplyDouyuSignServiceSetting()
+        {
+            var url = SettingHelper.GetValue<string>(SettingHelper.DOUYU_SIGN_URL, "");
+            CoreConfig.SetDouyuSignServiceUrl(url);
         }
         private void RegisterExceptionHandlingSynchronizationContext()
         {

@@ -169,7 +169,7 @@ namespace AllLive.Core
                         HlsAntiCode = item["sHlsAntiCode"].ToString(),
                         StreamName = item["sStreamName"].ToString(),
                         CdnType = cdnType,
-                        PresenterUid = item["lPresenterUid"].ToInt64(),
+                        PresenterUid = item["lChannelId"].ToInt64(),
                     });
                     if (lineIndex == 0 && item is JObject firstObj)
                     {
@@ -440,6 +440,83 @@ namespace AllLive.Core
             return param;
         }
 
+        private string BuildAntiCodeEx(string stream, long presenterUid, string antiCode)
+        {
+            if (string.IsNullOrEmpty(antiCode))
+            {
+                return antiCode;
+            }
+            var mapAnti = HttpUtility.ParseQueryString(antiCode);
+            var fmValue = mapAnti["fm"];
+            var wsTime = mapAnti["wsTime"];
+            if (string.IsNullOrEmpty(fmValue) || string.IsNullOrEmpty(wsTime))
+            {
+                return antiCode;
+            }
+
+            var ctype = mapAnti["ctype"] ?? "huya_pc_exe";
+            var platformId = 0;
+            int.TryParse(mapAnti["t"], out platformId);
+            var isWap = platformId == 103;
+            var calcStartTime = DateTimeOffset.Now.ToUnixTimeMilliseconds();
+            var seqId = presenterUid + calcStartTime;
+
+            var secretHash = Utils.ToMD5($"{seqId}|{ctype}|{platformId}");
+            var convertUid = Rotl64(presenterUid);
+            var calcUid = isWap ? presenterUid : convertUid;
+            var fm = Uri.UnescapeDataString(fmValue);
+            string secretPrefix;
+            try
+            {
+                secretPrefix = Encoding.UTF8.GetString(Convert.FromBase64String(fm)).Split('_').First();
+            }
+            catch
+            {
+                return antiCode;
+            }
+            var secretStr = $"{secretPrefix}_{calcUid}_{stream}_{secretHash}_{wsTime}";
+            var wsSecret = Utils.ToMD5(secretStr);
+
+            var rnd = new Random();
+            long wsTimeHex = 0;
+            long.TryParse(wsTime, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out wsTimeHex);
+            var ct = (long)((wsTimeHex + rnd.NextDouble()) * 1000);
+            var uuid = (long)(((ct % 1e10) + rnd.NextDouble()) * 1e3 % 0xffffffff);
+
+            var map = new NameValueCollection
+            {
+                { "wsSecret", wsSecret },
+                { "wsTime", wsTime },
+                { "seqid", seqId.ToString() },
+                { "ctype", ctype },
+                { "ver", "1" },
+                { "fs", mapAnti["fs"] ?? "" },
+                { "fm", fm },
+                { "t", platformId.ToString() }
+            };
+
+            if (isWap)
+            {
+                map.Add("uid", presenterUid.ToString());
+                map.Add("uuid", uuid.ToString());
+            }
+            else
+            {
+                map.Add("u", convertUid.ToString());
+            }
+
+            var param = string.Join("&", map.AllKeys.Select(x => $"{x}={Uri.EscapeDataString(map[x])}"));
+            return param;
+        }
+
+        private static long Rotl64(long value)
+        {
+            var low = value & 0xFFFFFFFFL;
+            var rotatedLow = ((low << 8) | (low >> 24)) & 0xFFFFFFFFL;
+            var high = value & ~0xFFFFFFFFL;
+            return high | rotatedLow;
+        }
+
         public async Task<List<string>> GetPlayUrls(LiveRoomDetail roomDetail, LivePlayQuality qn)
         {
             var data = qn.Data as HuyaQualityData;
@@ -485,40 +562,55 @@ namespace AllLive.Core
 
         private async Task<string> GetRealUrl(HuyaLineModel line, int bitrate)
         {
-            HYGetCdnTokenReq req = new HYGetCdnTokenReq();
-            req.stream_name = line.StreamName;
-            req.cdn_type = line.CdnType;
-            req.presenter_uid = line.PresenterUid;
-            req.url = line.Line;
             CoreDebug.Log($"[Huya] GetRealUrl line={line.Line} stream={line.StreamName} cdnType={line.CdnType} bitrate={bitrate}");
-            var resp = await tupHttpHelper.GetAsync(req, "getCdnTokenInfo", new HYGetCdnTokenResp());
-            CoreDebug.Log($"[Huya] TokenResp stream={resp.stream_name} cdn={resp.cdn_type} flvAntiLen={resp.flv_anti_code?.Length ?? 0} hlsAntiLen={resp.hls_anti_code?.Length ?? 0} urlLen={resp.url?.Length ?? 0}");
-            if (!string.IsNullOrEmpty(resp.flv_anti_code))
+            var token = await GetCdnTokenInfoEx(line);
+            if (string.IsNullOrEmpty(token))
             {
-                var query = HttpUtility.ParseQueryString(resp.flv_anti_code);
-                var wsTime = query["wsTime"];
-                if (!string.IsNullOrEmpty(wsTime) && long.TryParse(wsTime, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var seconds))
-                {
-                    var dt = DateTimeOffset.FromUnixTimeSeconds(seconds);
-                    var remain = (dt - DateTimeOffset.UtcNow).TotalSeconds;
-                    CoreDebug.Log($"[Huya] Token wsTime={wsTime} exp={dt:O} remain={remain:F0}s");
-                }
-                var wsSecret = query["wsSecret"];
-                if (!string.IsNullOrEmpty(wsSecret))
-                {
-                    CoreDebug.Log($"[Huya] Token wsSecretLen={wsSecret.Length}");
-                }
+                CoreDebug.Log("[Huya] TokenEx为空，回退到旧token生成");
+                return "";
             }
-            else if (!string.IsNullOrEmpty(line.FlvAntiCode))
-            {
-                CoreDebug.Log("[Huya] TokenResp flv_anti_code为空，line.FlvAntiCode有值");
-            }
-            var url =$"{line.Line}/{resp.stream_name}.flv?{resp.flv_anti_code}&codec=264";
+            var antiCode = BuildAntiCodeEx(line.StreamName, line.PresenterUid, token);
+            var suffix = line.LineType == HuyaLineType.HLS ? "m3u8" : "flv";
+            var url = $"{line.Line}/{line.StreamName}.{suffix}?{antiCode}&codec=264";
             if (bitrate > 0)
             {
                 url += $"&ratio={bitrate}";
             }
             return url;
+        }
+
+        private async Task<string> GetCdnTokenInfoEx(HuyaLineModel line)
+        {
+            var req = new HYGetCdnTokenExReq();
+            req.sStreamName = line.StreamName;
+            req.sFlvUrl = line.Line;
+            req.iLoopTime = 0;
+            req.iAppId = 66;
+            req.tId = new HuyaUserId()
+            {
+                sHuYaUA = "pc_exe&7060000&official"
+            };
+            var resp = await tupHttpHelper.GetAsync(req, "getCdnTokenInfoEx", new HYGetCdnTokenExResp());
+            var token = resp?.sFlvToken ?? "";
+            CoreDebug.Log($"[Huya] TokenExResp len={token.Length} exp={resp?.iExpireTime}");
+            if (!string.IsNullOrEmpty(token))
+            {
+                var query = HttpUtility.ParseQueryString(token);
+                var wsTime = query["wsTime"];
+                if (!string.IsNullOrEmpty(wsTime) && long.TryParse(wsTime, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var seconds))
+                {
+                    var dt = DateTimeOffset.FromUnixTimeSeconds(seconds);
+                    var remain = (dt - DateTimeOffset.UtcNow).TotalSeconds;
+                    CoreDebug.Log($"[Huya] TokenEx wsTime={wsTime} exp={dt:O} remain={remain:F0}s");
+                }
+                var wsSecret = query["wsSecret"];
+                if (!string.IsNullOrEmpty(wsSecret))
+                {
+                    CoreDebug.Log($"[Huya] TokenEx wsSecretLen={wsSecret.Length}");
+                }
+                CoreDebug.Log($"[Huya] TokenEx ctype={query["ctype"]} t={query["t"]} fs={query["fs"]}");
+            }
+            return token;
         }
 
         public async Task<bool> GetLiveStatus(object roomId)

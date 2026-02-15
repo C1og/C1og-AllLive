@@ -54,6 +54,11 @@ namespace AllLive.UWP.Helper
         public const string VIDEO_DECODER = "VideoDecoder";
 
         /// <summary>
+        /// 斗鱼签名服务地址（可为空，使用默认）
+        /// </summary>
+        public const string DOUYU_SIGN_URL = "DouyuSignUrl";
+
+        /// <summary>
         /// 音量
         /// </summary>
         public const string PLAYER_VOLUME = "PlayerVolume";
