@@ -35,6 +35,8 @@ using FFmpegInteropX;
 using Windows.Media.Playback;
 using System.Text;
 using System.Runtime;
+using Windows.Web.Http;
+using Windows.Web.Http.Headers;
 // https://go.microsoft.com/fwlink/?LinkId=234238 上介绍了“空白页”项模板
 
 namespace AllLive.UWP.Views
@@ -517,9 +519,18 @@ namespace AllLive.UWP.Views
             {
                 sb.AppendLine($"标题: {liveRoomVM.Title}");
             }
+            if (liveRoomVM?.SiteName == "哔哩哔哩直播")
+            {
+                sb.AppendLine($"哔哩登录: {BiliAccount.Instance?.Logined}");
+                sb.AppendLine($"哔哩用户ID: {BiliAccount.Instance?.UserId}");
+            }
             if (!string.IsNullOrEmpty(liveRoomVM?.CurrentQuality?.Quality))
             {
                 sb.AppendLine($"清晰度: {liveRoomVM.CurrentQuality.Quality}");
+            }
+            if (liveRoomVM?.CurrentQuality?.Data != null)
+            {
+                sb.AppendLine($"清晰度代码: {liveRoomVM.CurrentQuality.Data}");
             }
             if (liveRoomVM?.Lines != null && liveRoomVM.CurrentLine != null)
             {
@@ -545,6 +556,128 @@ namespace AllLive.UWP.Views
             }
             return sb.ToString().TrimEnd();
         }
+        private string BuildExceptionDetail(Exception ex)
+        {
+            if (ex == null)
+            {
+                return null;
+            }
+            var sb = new StringBuilder();
+            sb.AppendLine($"异常类型: {ex.GetType().FullName}");
+            sb.AppendLine($"HResult: 0x{ex.HResult:X8}");
+            if (!string.IsNullOrEmpty(ex.Message))
+            {
+                sb.AppendLine($"异常信息: {ex.Message}");
+            }
+            if (ex.TargetSite != null)
+            {
+                sb.AppendLine($"TargetSite: {ex.TargetSite.DeclaringType?.FullName}.{ex.TargetSite.Name}");
+            }
+            if (ex is AggregateException aggregate && aggregate.InnerExceptions != null && aggregate.InnerExceptions.Count > 0)
+            {
+                var index = 0;
+                foreach (var inner in aggregate.InnerExceptions)
+                {
+                    sb.AppendLine($"AggregateInner[{index}]: {inner.GetType().FullName} (0x{inner.HResult:X8}) {inner.Message}");
+                    index++;
+                }
+                return sb.ToString().TrimEnd();
+            }
+            var innerDepth = 0;
+            var innerEx = ex.InnerException;
+            while (innerEx != null && innerDepth < 4)
+            {
+                sb.AppendLine($"InnerException[{innerDepth}]: {innerEx.GetType().FullName}");
+                sb.AppendLine($"InnerHResult: 0x{innerEx.HResult:X8}");
+                if (!string.IsNullOrEmpty(innerEx.Message))
+                {
+                    sb.AppendLine($"InnerMessage: {innerEx.Message}");
+                }
+                innerEx = innerEx.InnerException;
+                innerDepth++;
+            }
+            return sb.ToString().TrimEnd();
+        }
+        private string BuildExceptionSummary(Exception ex)
+        {
+            if (ex == null)
+            {
+                return null;
+            }
+            return $"{ex.GetType().FullName} (0x{ex.HResult:X8}): {ex.Message}";
+        }
+        private void ApplyProbeHeaders(HttpRequestMessage request)
+        {
+            if (liveRoomVM?.SiteName == "哔哩哔哩直播")
+            {
+                request.Headers.Append("User-Agent", "Mozilla/5.0 BiliDroid/1.12.0 (bbcallen@gmail.com)");
+                request.Headers.Append("Referer", "https://live.bilibili.com/");
+            }
+            else if (liveRoomVM?.SiteName == "虎牙直播")
+            {
+                request.Headers.Append("User-Agent", "HYSDK(Windows, 30000002)_APP(pc_exe&6080100&official)_SDK(trans&2.23.0.4969)");
+            }
+        }
+        private async Task<string> ProbeUrlAsync(string url)
+        {
+            if (string.IsNullOrEmpty(url))
+            {
+                return null;
+            }
+            try
+            {
+                var uri = new Uri(url);
+                var sb = new StringBuilder();
+                sb.AppendLine("URL预检:");
+                sb.AppendLine($"Host: {uri.Host}");
+                sb.AppendLine($"Scheme: {uri.Scheme}");
+                sb.AppendLine($"Path: {uri.AbsolutePath}");
+                var headResult = await SendProbeAsync(uri, "HEAD", useRange: false);
+                sb.AppendLine(headResult);
+                if (!headResult.Contains("200") && !headResult.Contains("206"))
+                {
+                    var rangeResult = await SendProbeAsync(uri, "GET", useRange: true);
+                    sb.AppendLine(rangeResult);
+                }
+                return sb.ToString().TrimEnd();
+            }
+            catch (Exception ex)
+            {
+                return $"URL预检失败: {BuildExceptionSummary(ex)}";
+            }
+        }
+        private async Task<string> SendProbeAsync(Uri uri, string method, bool useRange)
+        {
+            using (var client = new HttpClient())
+            using (var request = new HttpRequestMessage(new HttpMethod(method), uri))
+            {
+                ApplyProbeHeaders(request);
+                if (useRange)
+                {
+                    request.Headers.Append("Range", "bytes=0-0");
+                }
+                var response = await client.SendRequestAsync(request, HttpCompletionOption.ResponseHeadersRead);
+                var sb = new StringBuilder();
+                sb.AppendLine($"{method} {(useRange ? "Range=0-0" : "")} => {(int)response.StatusCode} {response.ReasonPhrase}");
+                if (response.Headers.TryGetValue("Accept-Ranges", out string acceptRanges))
+                {
+                    sb.AppendLine($"Accept-Ranges: {acceptRanges}");
+                }
+                if (response.Content?.Headers?.ContentType != null)
+                {
+                    sb.AppendLine($"Content-Type: {response.Content.Headers.ContentType}");
+                }
+                if (response.Content?.Headers?.ContentLength != null)
+                {
+                    sb.AppendLine($"Content-Length: {response.Content.Headers.ContentLength}");
+                }
+                if (response.Content?.Headers?.ContentRange != null)
+                {
+                    sb.AppendLine($"Content-Range: {response.Content.Headers.ContentRange}");
+                }
+                return sb.ToString().TrimEnd();
+            }
+        }
         private void LogPlayError(string title, Exception ex = null, string extra = null)
         {
             var sb = new StringBuilder();
@@ -553,6 +686,11 @@ namespace AllLive.UWP.Views
             if (!string.IsNullOrEmpty(context))
             {
                 sb.AppendLine(context);
+            }
+            var exceptionDetail = BuildExceptionDetail(ex);
+            if (!string.IsNullOrEmpty(exceptionDetail))
+            {
+                sb.AppendLine(exceptionDetail);
             }
             if (!string.IsNullOrEmpty(extra))
             {
@@ -617,7 +755,8 @@ namespace AllLive.UWP.Views
                 }
                 catch (Exception ex)
                 {
-                    LogPlayError("播放器初始化失败", ex);
+                    var probe = await ProbeUrlAsync(url);
+                    LogPlayError("播放器初始化失败", ex, probe);
                     PlayError();
                     return;
                 }
@@ -629,7 +768,8 @@ namespace AllLive.UWP.Views
             }
             catch (Exception ex)
             {
-                LogPlayError("播放失败", ex);
+                var probe = await ProbeUrlAsync(url);
+                LogPlayError("播放失败", ex, probe);
                 Utils.ShowMessageToast("播放失败" + ex.Message);
             }
 
