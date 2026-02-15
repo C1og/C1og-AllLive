@@ -28,6 +28,7 @@ using Windows.UI.Xaml.Media.Imaging;
 using Windows.Graphics.Display;
 using Windows.UI;
 using Windows.ApplicationModel.Core;
+using Windows.ApplicationModel;
 using System.Diagnostics;
 using Newtonsoft.Json;
 using Windows.UI.Core;
@@ -37,6 +38,9 @@ using System.Text;
 using System.Runtime;
 using Windows.Web.Http;
 using Windows.Web.Http.Headers;
+using Windows.Networking.Connectivity;
+using Windows.System.Profile;
+using Windows.Storage.Streams;
 // https://go.microsoft.com/fwlink/?LinkId=234238 上介绍了“空白页”项模板
 
 namespace AllLive.UWP.Views
@@ -58,6 +62,11 @@ namespace AllLive.UWP.Views
         private bool isMini = false;
         DispatcherTimer timer_focus;
         DispatcherTimer controlTimer;
+        private string lastConfigSnapshot;
+        private string lastUrlAnalysis;
+        private string lastProbeSnapshot;
+        private string diagnosticsSnapshot;
+        private Task diagnosticsSnapshotTask;
 
         public LiveRoomPage()
         {
@@ -222,6 +231,7 @@ namespace AllLive.UWP.Views
 
         private async void MediaPlayer_MediaFailed(MediaPlayer sender, MediaPlayerFailedEventArgs args)
         {
+            await EnsureDiagnosticsSnapshotAsync();
             await this.Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, () =>
             {
                 var extra = new StringBuilder();
@@ -234,7 +244,8 @@ namespace AllLive.UWP.Views
                         extra.AppendLine($"ExtendedMessage: {args.ExtendedErrorCode.Message}");
                     }
                 }
-                LogPlayError("播放器播放失败", args.ExtendedErrorCode, extra.ToString().TrimEnd());
+                var mergedExtra = JoinNonEmpty(lastConfigSnapshot, lastUrlAnalysis, lastProbeSnapshot, extra.ToString().TrimEnd());
+                LogPlayError("播放器播放失败", args.ExtendedErrorCode, mergedExtra);
                 PlayError();
             });
 
@@ -556,6 +567,124 @@ namespace AllLive.UWP.Views
             }
             return sb.ToString().TrimEnd();
         }
+        private string BuildConfigSnapshot(MediaSourceConfig config)
+        {
+            if (config == null)
+            {
+                return null;
+            }
+            var sb = new StringBuilder();
+            sb.AppendLine("FFmpeg配置:");
+            sb.AppendLine($"VideoDecoderMode: {config.Video?.VideoDecoderMode}");
+            if (config.FFmpegOptions != null && config.FFmpegOptions.Count > 0)
+            {
+                foreach (var kv in config.FFmpegOptions)
+                {
+                    sb.AppendLine($"{kv.Key}={kv.Value}");
+                }
+            }
+            return sb.ToString().TrimEnd();
+        }
+        private string BuildUrlAnalysis(string url)
+        {
+            if (string.IsNullOrEmpty(url))
+            {
+                return null;
+            }
+            try
+            {
+                var uri = new Uri(url);
+                var sb = new StringBuilder();
+                sb.AppendLine("URL分析:");
+                sb.AppendLine($"完整长度: {url.Length}");
+                sb.AppendLine($"Scheme: {uri.Scheme}");
+                sb.AppendLine($"Host: {uri.Host}");
+                sb.AppendLine($"Path: {uri.AbsolutePath}");
+                if (!string.IsNullOrEmpty(uri.Query))
+                {
+                    var decoder = new WwwFormUrlDecoder(uri.Query);
+                    foreach (var item in decoder)
+                    {
+                        if (string.Equals(item.Name, "expires", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(item.Name, "deadline", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(item.Name, "wts", StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (TryParseUnixSeconds(item.Value, out var dt))
+                            {
+                                sb.AppendLine($"{item.Name}={item.Value} ({dt:O}, 剩余 {(dt - DateTimeOffset.UtcNow).TotalSeconds:F0}s)");
+                            }
+                            else
+                            {
+                                sb.AppendLine($"{item.Name}={item.Value}");
+                            }
+                        }
+                        else if (string.Equals(item.Name, "wsTime", StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (TryParseHexUnixSeconds(item.Value, out var dt))
+                            {
+                                sb.AppendLine($"{item.Name}={item.Value} (hex-> {dt:O}, 剩余 {(dt - DateTimeOffset.UtcNow).TotalSeconds:F0}s)");
+                            }
+                            else
+                            {
+                                sb.AppendLine($"{item.Name}={item.Value}");
+                            }
+                        }
+                        else if (string.Equals(item.Name, "qn", StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(item.Name, "codec", StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(item.Name, "format", StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(item.Name, "uipk", StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(item.Name, "uipv", StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(item.Name, "platform", StringComparison.OrdinalIgnoreCase))
+                        {
+                            sb.AppendLine($"{item.Name}={item.Value}");
+                        }
+                    }
+                }
+                return sb.ToString().TrimEnd();
+            }
+            catch (Exception ex)
+            {
+                return $"URL分析失败: {BuildExceptionSummary(ex)}";
+            }
+        }
+        private static bool TryParseUnixSeconds(string value, out DateTimeOffset dt)
+        {
+            dt = default;
+            if (long.TryParse(value, out var seconds))
+            {
+                try
+                {
+                    if (seconds > 0)
+                    {
+                        dt = DateTimeOffset.FromUnixTimeSeconds(seconds);
+                        return true;
+                    }
+                }
+                catch
+                {
+                }
+            }
+            return false;
+        }
+        private static bool TryParseHexUnixSeconds(string value, out DateTimeOffset dt)
+        {
+            dt = default;
+            if (long.TryParse(value, System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out var seconds))
+            {
+                try
+                {
+                    if (seconds > 0)
+                    {
+                        dt = DateTimeOffset.FromUnixTimeSeconds(seconds);
+                        return true;
+                    }
+                }
+                catch
+                {
+                }
+            }
+            return false;
+        }
         private string BuildExceptionDetail(Exception ex)
         {
             if (ex == null)
@@ -616,6 +745,7 @@ namespace AllLive.UWP.Views
             else if (liveRoomVM?.SiteName == "虎牙直播")
             {
                 request.Headers.Append("User-Agent", "HYSDK(Windows, 30000002)_APP(pc_exe&6080100&official)_SDK(trans&2.23.0.4969)");
+                request.Headers.Append("Referer", "https://m.huya.com/");
             }
         }
         private async Task<string> ProbeUrlAsync(string url)
@@ -634,17 +764,43 @@ namespace AllLive.UWP.Views
                 sb.AppendLine($"Path: {uri.AbsolutePath}");
                 var headResult = await SendProbeAsync(uri, "HEAD", useRange: false);
                 sb.AppendLine(headResult);
-                if (!headResult.Contains("200") && !headResult.Contains("206"))
-                {
-                    var rangeResult = await SendProbeAsync(uri, "GET", useRange: true);
-                    sb.AppendLine(rangeResult);
-                }
+                var rangeResult = await SendProbeAsync(uri, "GET", useRange: true);
+                sb.AppendLine(rangeResult);
                 return sb.ToString().TrimEnd();
             }
             catch (Exception ex)
             {
                 return $"URL预检失败: {BuildExceptionSummary(ex)}";
             }
+        }
+        private string AnalyzeFirstBytes(byte[] buffer)
+        {
+            if (buffer == null || buffer.Length == 0)
+            {
+                return "首包字节为空";
+            }
+            var hex = BitConverter.ToString(buffer);
+            var ascii = Encoding.ASCII.GetString(buffer, 0, Math.Min(buffer.Length, 32));
+            var sb = new StringBuilder();
+            sb.AppendLine($"首包HEX: {hex}");
+            sb.AppendLine($"首包ASCII: {ascii}");
+            if (buffer.Length >= 3 && buffer[0] == (byte)'F' && buffer[1] == (byte)'L' && buffer[2] == (byte)'V')
+            {
+                sb.AppendLine("首包签名: FLV");
+            }
+            else if (ascii.StartsWith("#EXTM3U", StringComparison.OrdinalIgnoreCase))
+            {
+                sb.AppendLine("首包签名: M3U8");
+            }
+            else if (ascii.StartsWith("RIFF", StringComparison.OrdinalIgnoreCase))
+            {
+                sb.AppendLine("首包签名: RIFF");
+            }
+            else
+            {
+                sb.AppendLine("首包签名: 未知");
+            }
+            return sb.ToString().TrimEnd();
         }
         private async Task<string> SendProbeAsync(Uri uri, string method, bool useRange)
         {
@@ -654,11 +810,15 @@ namespace AllLive.UWP.Views
                 ApplyProbeHeaders(request);
                 if (useRange)
                 {
-                    request.Headers.Append("Range", "bytes=0-0");
+                    request.Headers.Append("Range", "bytes=0-4095");
                 }
                 var response = await client.SendRequestAsync(request, HttpCompletionOption.ResponseHeadersRead);
                 var sb = new StringBuilder();
-                sb.AppendLine($"{method} {(useRange ? "Range=0-0" : "")} => {(int)response.StatusCode} {response.ReasonPhrase}");
+                sb.AppendLine($"{method} {(useRange ? "Range=0-4095" : "")} => {(int)response.StatusCode} {response.ReasonPhrase}");
+                if (response.RequestMessage?.RequestUri != null && response.RequestMessage.RequestUri != uri)
+                {
+                    sb.AppendLine($"Final-Uri: {response.RequestMessage.RequestUri}");
+                }
                 if (response.Headers.TryGetValue("Accept-Ranges", out string acceptRanges))
                 {
                     sb.AppendLine($"Accept-Ranges: {acceptRanges}");
@@ -675,8 +835,131 @@ namespace AllLive.UWP.Views
                 {
                     sb.AppendLine($"Content-Range: {response.Content.Headers.ContentRange}");
                 }
+                if (useRange && response.Content != null)
+                {
+                    try
+                    {
+                        using (var stream = await response.Content.ReadAsInputStreamAsync())
+                        using (var reader = new DataReader(stream))
+                        {
+                            var loaded = await reader.LoadAsync(32);
+                            if (loaded > 0)
+                            {
+                                var buffer = new byte[loaded];
+                                reader.ReadBytes(buffer);
+                                sb.AppendLine(AnalyzeFirstBytes(buffer));
+                            }
+                            else
+                            {
+                                sb.AppendLine("首包读取为空");
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        sb.AppendLine($"首包读取失败: {BuildExceptionSummary(ex)}");
+                    }
+                }
                 return sb.ToString().TrimEnd();
             }
+        }
+        private static string JoinNonEmpty(params string[] parts)
+        {
+            var sb = new StringBuilder();
+            foreach (var part in parts)
+            {
+                if (string.IsNullOrWhiteSpace(part))
+                {
+                    continue;
+                }
+                if (sb.Length > 0)
+                {
+                    sb.AppendLine();
+                }
+                sb.AppendLine(part.TrimEnd());
+            }
+            return sb.Length == 0 ? null : sb.ToString().TrimEnd();
+        }
+        private async Task EnsureDiagnosticsSnapshotAsync()
+        {
+            if (!string.IsNullOrEmpty(diagnosticsSnapshot))
+            {
+                return;
+            }
+            if (diagnosticsSnapshotTask == null)
+            {
+                diagnosticsSnapshotTask = BuildDiagnosticsSnapshotAsync();
+            }
+            await diagnosticsSnapshotTask;
+        }
+        private async Task BuildDiagnosticsSnapshotAsync()
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("环境信息:");
+            try
+            {
+                sb.AppendLine($"设备族: {AnalyticsInfo.VersionInfo.DeviceFamily}");
+                var deviceVersion = ulong.Parse(AnalyticsInfo.VersionInfo.DeviceFamilyVersion);
+                var major = (deviceVersion & 0xFFFF000000000000L) >> 48;
+                var minor = (deviceVersion & 0x0000FFFF00000000L) >> 32;
+                var build = (deviceVersion & 0x00000000FFFF0000L) >> 16;
+                var revision = deviceVersion & 0x000000000000FFFFL;
+                sb.AppendLine($"系统版本: {major}.{minor}.{build}.{revision}");
+            }
+            catch
+            {
+            }
+            try
+            {
+                var package = Package.Current;
+                var v = package.Id.Version;
+                sb.AppendLine($"应用版本: {v.Major}.{v.Minor}.{v.Build}.{v.Revision}");
+                sb.AppendLine($"架构: {package.Id.Architecture}");
+            }
+            catch
+            {
+            }
+            try
+            {
+                var profile = NetworkInformation.GetInternetConnectionProfile();
+                var level = profile?.GetNetworkConnectivityLevel();
+                sb.AppendLine($"网络: {(profile == null ? "无" : profile.ProfileName)}");
+                sb.AppendLine($"连通性: {level}");
+            }
+            catch
+            {
+            }
+            try
+            {
+                var folder = Package.Current.InstalledLocation;
+                var libs = new[]
+                {
+                    "FFmpegInteropX.dll",
+                    "avformat-59.dll",
+                    "avcodec-59.dll",
+                    "avutil-57.dll",
+                    "swresample-4.dll",
+                    "swscale-6.dll"
+                };
+                foreach (var lib in libs)
+                {
+                    var item = await folder.TryGetItemAsync(lib);
+                    if (item != null)
+                    {
+                        var file = item as StorageFile;
+                        var props = await file.GetBasicPropertiesAsync();
+                        sb.AppendLine($"{lib}: {props.Size} bytes");
+                    }
+                    else
+                    {
+                        sb.AppendLine($"{lib}: 未找到");
+                    }
+                }
+            }
+            catch
+            {
+            }
+            diagnosticsSnapshot = sb.ToString().TrimEnd();
         }
         private void LogPlayError(string title, Exception ex = null, string extra = null)
         {
@@ -686,6 +969,10 @@ namespace AllLive.UWP.Views
             if (!string.IsNullOrEmpty(context))
             {
                 sb.AppendLine(context);
+            }
+            if (!string.IsNullOrEmpty(diagnosticsSnapshot))
+            {
+                sb.AppendLine(diagnosticsSnapshot);
             }
             var exceptionDetail = BuildExceptionDetail(ex);
             if (!string.IsNullOrEmpty(exceptionDetail))
@@ -748,6 +1035,16 @@ namespace AllLive.UWP.Views
                     //var currentTs = last8 > validTs ? last8 : (validTs + sysTs / 100);
                     //config.FFmpegOptions.Add("user_agent", $"HYSDK(Windows, {currentTs})");
                     config.FFmpegOptions.Add("user_agent", "HYSDK(Windows, 30000002)_APP(pc_exe&6080100&official)_SDK(trans&2.23.0.4969)");
+                    config.FFmpegOptions.Add("referer", "https://m.huya.com/");
+                }
+                lastConfigSnapshot = BuildConfigSnapshot(config);
+                lastUrlAnalysis = BuildUrlAnalysis(url);
+                lastProbeSnapshot = null;
+                await EnsureDiagnosticsSnapshotAsync();
+                var attemptLog = JoinNonEmpty("播放尝试", BuildPlaybackContext(), lastConfigSnapshot, lastUrlAnalysis);
+                if (!string.IsNullOrEmpty(attemptLog))
+                {
+                    LogHelper.Log(attemptLog, LogType.DEBUG);
                 }
                 try
                 {
@@ -756,7 +1053,9 @@ namespace AllLive.UWP.Views
                 catch (Exception ex)
                 {
                     var probe = await ProbeUrlAsync(url);
-                    LogPlayError("播放器初始化失败", ex, probe);
+                    lastProbeSnapshot = probe;
+                    var mergedExtra = JoinNonEmpty(lastConfigSnapshot, lastUrlAnalysis, probe);
+                    LogPlayError("播放器初始化失败", ex, mergedExtra);
                     PlayError();
                     return;
                 }
@@ -769,7 +1068,9 @@ namespace AllLive.UWP.Views
             catch (Exception ex)
             {
                 var probe = await ProbeUrlAsync(url);
-                LogPlayError("播放失败", ex, probe);
+                lastProbeSnapshot = probe;
+                var mergedExtra = JoinNonEmpty(lastConfigSnapshot, lastUrlAnalysis, probe);
+                LogPlayError("播放失败", ex, mergedExtra);
                 Utils.ShowMessageToast("播放失败" + ex.Message);
             }
 
@@ -786,7 +1087,7 @@ namespace AllLive.UWP.Views
             if (index == liveRoomVM.Lines.Count - 1)
             {
                 PlayerLoading.Visibility = Visibility.Collapsed;
-                LogPlayError("直播加载失败");
+                LogPlayError("直播加载失败", null, JoinNonEmpty(lastConfigSnapshot, lastUrlAnalysis, lastProbeSnapshot));
                 await new MessageDialog($"啊，播放失败了，请尝试以下操作\r\n1、更换清晰度或线路\r\n2、请尝试在直播设置中打开/关闭硬解试试", "播放失败").ShowAsync();
             }
             else
