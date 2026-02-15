@@ -123,12 +123,28 @@ jobs:
           $signingArgs = @()
           $certificatePath = $null
           $certExportPath = $null
+          $certificatePassword = $null
+          $publisher = $null
 
           try {
+            $manifestPath = Join-Path $PWD "AllLive.UWP\\Package.appxmanifest"
+            if (Test-Path $manifestPath) {
+              [xml]$manifest = Get-Content $manifestPath
+              $publisher = $manifest.Package.Identity.Publisher
+            }
+            if ([string]::IsNullOrWhiteSpace($publisher)) {
+              $publisher = "CN=AllLive"
+            }
+
             if ([string]::IsNullOrWhiteSpace($env:KEYSTORE_BASE64) -or [string]::IsNullOrWhiteSpace($env:KEY_PASSWORD)) {
-              Write-Host "No signing secrets provided; building unsigned package."
-              $signingArgs += "/p:AppxPackageSigningEnabled=false"
-              $signingArgs += "/p:GenerateTemporaryStoreCertificate=false"
+              Write-Host "No signing secrets provided; generating a self-signed certificate."
+              $certificatePassword = "TempPass!123"
+              $securePassword = ConvertTo-SecureString -String $certificatePassword -Force -AsPlainText
+              $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject $publisher -CertStoreLocation "Cert:\\CurrentUser\\My" -KeyExportPolicy Exportable
+              $certificatePath = Join-Path -Path $env:RUNNER_TEMP -ChildPath "AllLive_Temporary.pfx"
+              Export-PfxCertificate -Cert $cert -FilePath $certificatePath -Password $securePassword | Out-Null
+              $certExportPath = Join-Path -Path $env:RUNNER_TEMP -ChildPath "AllLive.cer"
+              Export-Certificate -Cert $cert -FilePath $certExportPath | Out-Null
             } else {
               $certificatePath = Join-Path -Path $env:RUNNER_TEMP -ChildPath "CustomCertificate.pfx"
               Write-Host "Writing temporary certificate file..."
@@ -143,16 +159,18 @@ jobs:
               )
               Write-Host "Subject: $($cert.Subject)"
               Write-Host "Thumbprint: $($cert.Thumbprint)"
-              $signingArgs += "/p:GenerateTemporaryStoreCertificate=false"
-              $signingArgs += "/p:PackageCertificateKeyFile=$certificatePath"
-              $signingArgs += "/p:PackageCertificatePassword=$env:KEY_PASSWORD"
-              $signingArgs += "/p:PackageCertificateThumbprint=$($cert.Thumbprint)"
-              $signingArgs += "/p:PackagePublisher=$($cert.Subject)"
-
+              $certificatePassword = $env:KEY_PASSWORD
               $certExportPath = Join-Path -Path $env:RUNNER_TEMP -ChildPath "AllLive.cer"
               $cerBytes = $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)
               [IO.File]::WriteAllBytes($certExportPath, $cerBytes)
             }
+
+            $signingArgs += "/p:AppxPackageSigningEnabled=true"
+            $signingArgs += "/p:GenerateTemporaryStoreCertificate=false"
+            $signingArgs += "/p:PackageCertificateKeyFile=$certificatePath"
+            $signingArgs += "/p:PackageCertificatePassword=$certificatePassword"
+            $signingArgs += "/p:PackageCertificateThumbprint=$($cert.Thumbprint)"
+            $signingArgs += "/p:PackagePublisher=$($cert.Subject)"
 
             $windowsSdkVersion = "$env:WINDOWS_SDK_VERSION"
             $windowsSdkVersionWithSlash = "$env:WINDOWS_SDK_VERSION\"
@@ -166,7 +184,7 @@ jobs:
               "/p:AppxBundlePlatforms=x64",
               "/p:TargetPlatformVersion=$windowsSdkVersion",
               "/p:TargetPlatformMinVersion=10.0.18362.0",
-              "/p:UapAppxPackageBuildMode=StoreUpload",
+              "/p:UapAppxPackageBuildMode=SideloadOnly",
               "/p:VisualStudioVersion=17.0",
               "/p:WindowsSdkDir=$env:WINDOWS_SDK_DIR",
               "/p:WindowsSDKVersion=$windowsSdkVersionWithSlash",
