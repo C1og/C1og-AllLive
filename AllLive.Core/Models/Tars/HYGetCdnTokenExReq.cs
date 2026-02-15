@@ -15,7 +15,11 @@ namespace AllLive.Core.Models.Tars
             sFlvUrl = _is.Read(sFlvUrl, 0, isRequire: false);
             sStreamName = _is.Read(sStreamName, 1, isRequire: false);
             iLoopTime = _is.Read(iLoopTime, 2, isRequire: false);
-            tId = _is.Read(tId, 3, isRequire: false);
+            var tIdValue = _is.Read(tId, 3, isRequire: false);
+            if (tIdValue != null)
+            {
+                tId = (HuyaUserId)tIdValue;
+            }
             iAppId = _is.Read(iAppId, 4, isRequire: false);
         }
 
