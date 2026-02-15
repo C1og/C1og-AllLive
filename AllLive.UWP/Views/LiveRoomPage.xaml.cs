@@ -99,7 +99,7 @@ namespace AllLive.UWP.Views
             }
 
             // 新窗口打开，调整UI
-            if (SettingHelper.GetValue(SettingHelper.NEW_WINDOW_LIVEROOM, false))
+            if (SettingHelper.GetValue(SettingHelper.NEW_WINDOW_LIVEROOM, true))
             {
                 ApplicationView.GetForCurrentView().Consolidated += LiveRoomPage_Consolidated;
                 TitleBar.Visibility = Visibility.Visible;
@@ -139,7 +139,7 @@ namespace AllLive.UWP.Views
         }
         private void HideTitleBar(bool hide)
         {
-            if (SettingHelper.GetValue(SettingHelper.NEW_WINDOW_LIVEROOM, false))
+            if (SettingHelper.GetValue(SettingHelper.NEW_WINDOW_LIVEROOM, true))
             {
                 if (hide)
                 {
@@ -491,7 +491,7 @@ namespace AllLive.UWP.Views
         }
         private string GetDecoderModeText()
         {
-            var decoder = SettingHelper.GetValue<int>(SettingHelper.VIDEO_DECODER, Utils.IsXbox ? 1 : 0);
+            var decoder = SettingHelper.GetValue<int>(SettingHelper.VIDEO_DECODER, 1);
             switch (decoder)
             {
                 case 1:
@@ -580,7 +580,7 @@ namespace AllLive.UWP.Views
 
                 var config = new MediaSourceConfig();
                 config.FFmpegOptions.Add("rtsp_transport", "tcp");
-                var decoder = SettingHelper.GetValue<int>(SettingHelper.VIDEO_DECODER, Utils.IsXbox ? 1 : 0);
+                var decoder = SettingHelper.GetValue<int>(SettingHelper.VIDEO_DECODER, 1);
                 switch (decoder)
                 {
                     case 1:
@@ -865,7 +865,7 @@ namespace AllLive.UWP.Views
             //        Utils.ShowMessageToast("更改清晰度或刷新后生效");
             //    });
             //});
-            cbDecoder.SelectedIndex = SettingHelper.GetValue<int>(SettingHelper.VIDEO_DECODER, Utils.IsXbox ? 1 : 0);
+            cbDecoder.SelectedIndex = SettingHelper.GetValue<int>(SettingHelper.VIDEO_DECODER, 1);
             cbDecoder.Loaded += new RoutedEventHandler((sender, e) =>
             {
                 cbDecoder.SelectionChanged += new SelectionChangedEventHandler((obj, args) =>
@@ -1001,7 +1001,7 @@ namespace AllLive.UWP.Views
         private void LoadXboxSetting()
         {
 
-            xboxSettingsDecoder.SelectedIndex = SettingHelper.GetValue<int>(SettingHelper.VIDEO_DECODER, Utils.IsXbox ? 1 : 0);
+            xboxSettingsDecoder.SelectedIndex = SettingHelper.GetValue<int>(SettingHelper.VIDEO_DECODER, 1);
             xboxSettingsDecoder.Loaded += new RoutedEventHandler((sender, e) =>
             {
                 xboxSettingsDecoder.SelectionChanged += new SelectionChangedEventHandler((obj, args) =>

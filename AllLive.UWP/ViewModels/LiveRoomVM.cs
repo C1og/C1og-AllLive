@@ -347,7 +347,7 @@ namespace AllLive.UWP.ViewModels
 
         private void SetWindowTitle()
         {
-            if (SettingHelper.GetValue(SettingHelper.NEW_WINDOW_LIVEROOM, false))
+            if (SettingHelper.GetValue(SettingHelper.NEW_WINDOW_LIVEROOM, true))
             {
                 Windows.UI.ViewManagement.ApplicationView.GetForCurrentView().Title = $"{Title} - {SiteName}";
             }

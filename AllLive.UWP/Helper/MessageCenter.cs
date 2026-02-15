@@ -97,7 +97,7 @@ namespace AllLive.UWP.Helper
 
         public async static void NavigatePage(Type page, object data)
         {
-            if(SettingHelper.GetValue(SettingHelper.NEW_WINDOW_LIVEROOM, false)&& page == typeof(LiveRoomPage))
+            if(SettingHelper.GetValue(SettingHelper.NEW_WINDOW_LIVEROOM, true)&& page == typeof(LiveRoomPage))
             {
                 CoreApplicationView newView = CoreApplication.CreateNewView();
                 int newViewId = 0;

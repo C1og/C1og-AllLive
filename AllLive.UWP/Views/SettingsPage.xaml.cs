@@ -121,7 +121,7 @@ namespace AllLive.UWP.Views
                 });
             });
             //视频解码
-            cbDecoder.SelectedIndex = SettingHelper.GetValue<int>(SettingHelper.VIDEO_DECODER, 0);
+            cbDecoder.SelectedIndex = SettingHelper.GetValue<int>(SettingHelper.VIDEO_DECODER, 1);
             cbDecoder.Loaded += new RoutedEventHandler((sender, e) =>
             {
                 cbDecoder.SelectionChanged += new SelectionChangedEventHandler((obj, args) =>
@@ -140,7 +140,7 @@ namespace AllLive.UWP.Views
             });
 
             //新窗口打开
-            swNewWindow.IsOn = SettingHelper.GetValue<bool>(SettingHelper.NEW_WINDOW_LIVEROOM, false);
+            swNewWindow.IsOn = SettingHelper.GetValue<bool>(SettingHelper.NEW_WINDOW_LIVEROOM, true);
             swNewWindow.Loaded += new RoutedEventHandler((sender, e) =>
             {
                 swNewWindow.Toggled += new RoutedEventHandler((obj, args) =>
