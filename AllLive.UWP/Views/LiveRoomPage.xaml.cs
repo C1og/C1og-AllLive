@@ -687,7 +687,6 @@ namespace AllLive.UWP.Views
             sb.AppendLine($"BufferingProgress: {session.BufferingProgress:P}");
             sb.AppendLine($"DownloadProgress: {session.DownloadProgress:P}");
             sb.AppendLine($"CanSeek: {session.CanSeek}");
-            sb.AppendLine($"IsLive: {session.IsLive}");
             sb.AppendLine($"PlaybackRate: {session.PlaybackRate}");
             return sb.ToString().TrimEnd();
         }
