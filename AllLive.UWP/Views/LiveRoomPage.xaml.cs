@@ -222,7 +222,17 @@ namespace AllLive.UWP.Views
         {
             await this.Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, () =>
             {
-
+                var extra = new StringBuilder();
+                extra.AppendLine($"MediaPlayerError: {args.Error}");
+                if (args.ExtendedErrorCode != null)
+                {
+                    extra.AppendLine($"ExtendedErrorCode: 0x{args.ExtendedErrorCode.HResult:X8}");
+                    if (!string.IsNullOrEmpty(args.ExtendedErrorCode.Message))
+                    {
+                        extra.AppendLine($"ExtendedMessage: {args.ExtendedErrorCode.Message}");
+                    }
+                }
+                LogPlayError("播放器播放失败", args.ExtendedErrorCode, extra.ToString().TrimEnd());
                 PlayError();
             });
 
@@ -479,6 +489,78 @@ namespace AllLive.UWP.Views
         {
             _ = SetPlayer(e);
         }
+        private string GetDecoderModeText()
+        {
+            var decoder = SettingHelper.GetValue<int>(SettingHelper.VIDEO_DECODER, Utils.IsXbox ? 1 : 0);
+            switch (decoder)
+            {
+                case 1:
+                    return "系统硬解";
+                case 2:
+                    return "FFmpeg软件解码";
+                default:
+                    return "自动";
+            }
+        }
+        private string BuildPlaybackContext()
+        {
+            var sb = new StringBuilder();
+            if (!string.IsNullOrEmpty(liveRoomVM?.SiteName))
+            {
+                sb.AppendLine($"站点: {liveRoomVM.SiteName}");
+            }
+            if (!string.IsNullOrEmpty(liveRoomVM?.RoomID))
+            {
+                sb.AppendLine($"房间ID: {liveRoomVM.RoomID}");
+            }
+            if (!string.IsNullOrEmpty(liveRoomVM?.Title))
+            {
+                sb.AppendLine($"标题: {liveRoomVM.Title}");
+            }
+            if (!string.IsNullOrEmpty(liveRoomVM?.CurrentQuality?.Quality))
+            {
+                sb.AppendLine($"清晰度: {liveRoomVM.CurrentQuality.Quality}");
+            }
+            if (liveRoomVM?.Lines != null && liveRoomVM.CurrentLine != null)
+            {
+                var lineIndex = liveRoomVM.Lines.IndexOf(liveRoomVM.CurrentLine);
+                if (lineIndex >= 0)
+                {
+                    sb.AppendLine($"线路: {liveRoomVM.CurrentLine.Name} ({lineIndex + 1}/{liveRoomVM.Lines.Count})");
+                }
+                else
+                {
+                    sb.AppendLine($"线路: {liveRoomVM.CurrentLine.Name}");
+                }
+            }
+            if (!string.IsNullOrEmpty(liveRoomVM?.CurrentLine?.Url))
+            {
+                sb.AppendLine($"Url: {liveRoomVM.CurrentLine.Url}");
+            }
+            sb.AppendLine($"解码模式: {GetDecoderModeText()}");
+            var state = mediaPlayer?.PlaybackSession?.PlaybackState.ToString();
+            if (!string.IsNullOrEmpty(state))
+            {
+                sb.AppendLine($"播放器状态: {state}");
+            }
+            return sb.ToString().TrimEnd();
+        }
+        private void LogPlayError(string title, Exception ex = null, string extra = null)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine(title);
+            var context = BuildPlaybackContext();
+            if (!string.IsNullOrEmpty(context))
+            {
+                sb.AppendLine(context);
+            }
+            if (!string.IsNullOrEmpty(extra))
+            {
+                sb.AppendLine(extra);
+            }
+            var message = sb.ToString().TrimEnd();
+            LogHelper.Log(message, LogType.ERROR, ex);
+        }
         private async Task SetPlayer(string url)
         {
             try
@@ -535,7 +617,7 @@ namespace AllLive.UWP.Views
                 }
                 catch (Exception ex)
                 {
-                    LogHelper.Log("播放器初始化失败", LogType.ERROR, ex);
+                    LogPlayError("播放器初始化失败", ex);
                     PlayError();
                     return;
                 }
@@ -547,6 +629,7 @@ namespace AllLive.UWP.Views
             }
             catch (Exception ex)
             {
+                LogPlayError("播放失败", ex);
                 Utils.ShowMessageToast("播放失败" + ex.Message);
             }
 
@@ -563,7 +646,7 @@ namespace AllLive.UWP.Views
             if (index == liveRoomVM.Lines.Count - 1)
             {
                 PlayerLoading.Visibility = Visibility.Collapsed;
-                LogHelper.Log("直播加载失败", LogType.ERROR, new Exception("直播加载失败"));
+                LogPlayError("直播加载失败");
                 await new MessageDialog($"啊，播放失败了，请尝试以下操作\r\n1、更换清晰度或线路\r\n2、请尝试在直播设置中打开/关闭硬解试试", "播放失败").ShowAsync();
             }
             else

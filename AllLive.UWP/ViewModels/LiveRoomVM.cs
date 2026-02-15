@@ -384,6 +384,7 @@ namespace AllLive.UWP.ViewModels
                 var data = await Site.GetPlayUrls(detail, CurrentQuality);
                 if (data.Count == 0)
                 {
+                    LogHelper.Log($"加载播放地址失败: 返回空列表。站点:{Site?.Name} 房间ID:{RoomID} 清晰度:{CurrentQuality?.Quality}", LogType.ERROR);
                     Utils.ShowMessageToast("加载播放地址失败");
                     return;
                 }
@@ -400,8 +401,9 @@ namespace AllLive.UWP.ViewModels
                 Lines = ls;
                 CurrentLine = Lines[0];
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                LogHelper.Log($"加载播放地址失败。站点:{Site?.Name} 房间ID:{RoomID} 清晰度:{CurrentQuality?.Quality}", LogType.ERROR, ex);
                 Utils.ShowMessageToast("加载播放地址失败");
             }
 
