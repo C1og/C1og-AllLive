@@ -70,6 +70,10 @@ namespace AllLive.UWP.Views
         private DateTimeOffset? lastHuyaRefreshUtc;
         private static readonly TimeSpan HuyaRefreshCooldown = TimeSpan.FromSeconds(30);
         private MediaPlaybackState? lastPlaybackState;
+        private DateTimeOffset? lastMediaOpenedUtc;
+        private DateTimeOffset? lastPlaybackStartUtc;
+        private string lastPlaybackUrl;
+        private static readonly TimeSpan EarlyEndThreshold = TimeSpan.FromSeconds(5);
 
         public LiveRoomPage()
         {
@@ -198,6 +202,11 @@ namespace AllLive.UWP.Views
                 {
                     LogHelper.Log($"媒体播放结束\n{sessionSnapshot}", LogType.DEBUG);
                 }
+                var earlyProbe = BuildEarlyEndProbe(sender?.PlaybackSession, "播放结束");
+                if (!string.IsNullOrEmpty(earlyProbe))
+                {
+                    LogHelper.Log(earlyProbe, LogType.DEBUG);
+                }
                 if (TryRefreshHuyaPlayUrls("播放结束"))
                 {
                     return;
@@ -275,6 +284,7 @@ namespace AllLive.UWP.Views
                 //保持屏幕常亮
                 dispRequest.RequestActive();
                 PlayerLoading.Visibility = Visibility.Collapsed;
+                lastMediaOpenedUtc = DateTimeOffset.UtcNow;
                 SetMediaInfo();
             });
         }
@@ -290,6 +300,11 @@ namespace AllLive.UWP.Views
                     if (!string.IsNullOrEmpty(sessionSnapshot))
                     {
                         LogHelper.Log($"播放状态变更: {sender.PlaybackState}\n{sessionSnapshot}", LogType.DEBUG);
+                    }
+                    if (sender.PlaybackState == MediaPlaybackState.Playing)
+                    {
+                        lastPlaybackStartUtc = DateTimeOffset.UtcNow;
+                        lastPlaybackUrl = liveRoomVM?.CurrentLine?.Url;
                     }
                 }
                 switch (sender.PlaybackState)
@@ -688,6 +703,141 @@ namespace AllLive.UWP.Views
             AppendPlaybackValue(sb, "DownloadProgress", () => session.DownloadProgress.ToString("P"));
             AppendPlaybackValue(sb, "CanSeek", () => session.CanSeek.ToString());
             AppendPlaybackValue(sb, "PlaybackRate", () => session.PlaybackRate.ToString());
+            return sb.ToString().TrimEnd();
+        }
+        private string BuildEarlyEndProbe(MediaPlaybackSession session, string reason)
+        {
+            var url = liveRoomVM?.CurrentLine?.Url ?? lastPlaybackUrl;
+            if (string.IsNullOrEmpty(url))
+            {
+                return null;
+            }
+            TimeSpan? duration = null;
+            if (lastPlaybackStartUtc.HasValue)
+            {
+                duration = DateTimeOffset.UtcNow - lastPlaybackStartUtc.Value;
+            }
+            if (duration.HasValue && duration.Value > EarlyEndThreshold)
+            {
+                return null;
+            }
+            var reasonText = duration.HasValue ? $"{reason} duration={duration.Value.TotalSeconds:F2}s" : reason;
+            _ = Task.Run(async () =>
+            {
+                var probe = await ProbeUrlAsync(url);
+                var flvProbe = await ProbeFlvAsync(url);
+                var merged = JoinNonEmpty($"短播放预检: {reasonText}", probe, flvProbe);
+                if (!string.IsNullOrEmpty(merged))
+                {
+                    LogHelper.Log(merged, LogType.DEBUG);
+                }
+            });
+            return $"短播放预检触发: {reasonText}";
+        }
+        private async Task<string> ProbeFlvAsync(string url)
+        {
+            if (string.IsNullOrEmpty(url))
+            {
+                return null;
+            }
+            try
+            {
+                var uri = new Uri(url);
+                var sb = new StringBuilder();
+                sb.AppendLine("FLV样本预检:");
+                sb.AppendLine($"Host: {uri.Host}");
+                sb.AppendLine($"Path: {uri.AbsolutePath}");
+                const uint maxBytes = 262144;
+                using (var client = new HttpClient())
+                using (var request = new HttpRequestMessage(HttpMethod.Get, uri))
+                {
+                    ApplyProbeHeaders(request);
+                    request.Headers.Append("Range", $"bytes=0-{maxBytes - 1}");
+                    var response = await client.SendRequestAsync(request, HttpCompletionOption.ResponseHeadersRead);
+                    sb.AppendLine($"GET Range=0-{maxBytes - 1} => {(int)response.StatusCode} {response.ReasonPhrase}");
+                    if (response.Content?.Headers?.ContentType != null)
+                    {
+                        sb.AppendLine($"Content-Type: {response.Content.Headers.ContentType}");
+                    }
+                    if (response.Content?.Headers?.ContentLength != null)
+                    {
+                        sb.AppendLine($"Content-Length: {response.Content.Headers.ContentLength}");
+                    }
+                    using (var stream = await response.Content.ReadAsInputStreamAsync())
+                    using (var reader = new DataReader(stream))
+                    {
+                        var loaded = await reader.LoadAsync(maxBytes);
+                        if (loaded == 0)
+                        {
+                            sb.AppendLine("样本读取为空");
+                        }
+                        else
+                        {
+                            var buffer = new byte[loaded];
+                            reader.ReadBytes(buffer);
+                            sb.AppendLine(AnalyzeFlvTags(buffer, (int)loaded));
+                        }
+                    }
+                    return sb.ToString().TrimEnd();
+                }
+            }
+            catch (Exception ex)
+            {
+                return $"FLV样本预检失败: {BuildExceptionSummary(ex)}";
+            }
+        }
+        private string AnalyzeFlvTags(byte[] buffer, int length)
+        {
+            if (buffer == null || length <= 0)
+            {
+                return "FLV样本为空";
+            }
+            if (length < 13 || buffer[0] != (byte)'F' || buffer[1] != (byte)'L' || buffer[2] != (byte)'V')
+            {
+                return $"FLV样本签名异常 len={length}";
+            }
+            var offset = 9 + 4;
+            var audio = 0;
+            var video = 0;
+            var script = 0;
+            var tags = 0;
+            var firstAudio = -1;
+            var firstVideo = -1;
+            while (offset + 11 <= length)
+            {
+                var tagType = buffer[offset];
+                var dataSize = (buffer[offset + 1] << 16) | (buffer[offset + 2] << 8) | buffer[offset + 3];
+                if (dataSize < 0)
+                {
+                    break;
+                }
+                if (tagType == 8)
+                {
+                    audio++;
+                    if (firstAudio < 0) firstAudio = offset;
+                }
+                else if (tagType == 9)
+                {
+                    video++;
+                    if (firstVideo < 0) firstVideo = offset;
+                }
+                else if (tagType == 18)
+                {
+                    script++;
+                }
+                tags++;
+                var next = offset + 11 + dataSize + 4;
+                if (next <= offset || next > length)
+                {
+                    break;
+                }
+                offset = next;
+            }
+            var sb = new StringBuilder();
+            sb.AppendLine($"FLV标签统计: tags={tags} audio={audio} video={video} script={script}");
+            sb.AppendLine($"首音频偏移: {(firstAudio < 0 ? "无" : firstAudio.ToString())}");
+            sb.AppendLine($"首视频偏移: {(firstVideo < 0 ? "无" : firstVideo.ToString())}");
+            sb.AppendLine($"样本长度: {length}");
             return sb.ToString().TrimEnd();
         }
         private void AppendPlaybackValue(StringBuilder sb, string name, Func<string> getter)

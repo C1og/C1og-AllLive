@@ -9,6 +9,8 @@ using Newtonsoft.Json.Linq;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using System.Linq;
+using System.Net.Http;
+using System.Text;
 
 
 /*
@@ -291,18 +293,54 @@ namespace AllLive.Core
             };
             var payload = Newtonsoft.Json.JsonConvert.SerializeObject(jsonObj);
             CoreDebug.Log($"[Douyu] 调用签名服务 reason={reason} payloadLen={payload.Length}");
-            var result = await HttpUtil.PostJsonString("http://alive.nsapps.cn/api/AllLive/DouyuSign", payload);
-            CoreDebug.Log($"[Douyu] 签名服务响应 len={result?.Length ?? 0}");
-            var obj = JObject.Parse(result);
-            var code = obj["code"].ToInt32();
-            var data = obj["data"]?.ToString();
-            var msg = obj["msg"]?.ToString();
-            CoreDebug.Log($"[Douyu] 签名服务 code={code} msg={msg} dataLen={data?.Length ?? 0}");
-            if (code == 0)
+            try
             {
-                return data;
+                using (var client = new HttpClient())
+                {
+                    client.Timeout = TimeSpan.FromSeconds(10);
+                    var start = DateTimeOffset.UtcNow;
+                    using (var content = new StringContent(payload, Encoding.UTF8, "application/json"))
+                    using (var response = await client.PostAsync("http://alive.nsapps.cn/api/AllLive/DouyuSign", content))
+                    {
+                        var body = await response.Content.ReadAsStringAsync();
+                        var elapsedMs = (DateTimeOffset.UtcNow - start).TotalMilliseconds;
+                        CoreDebug.Log($"[Douyu] 签名服务 status={(int)response.StatusCode} {response.ReasonPhrase} elapsedMs={elapsedMs:F0} bodyLen={body?.Length ?? 0}");
+                        if (!response.IsSuccessStatusCode)
+                        {
+                            CoreDebug.Log($"[Douyu] 签名服务非200 bodyHead={TrimForLog(body)}");
+                            return "";
+                        }
+                        var obj = JObject.Parse(body);
+                        var code = obj["code"].ToInt32();
+                        var data = obj["data"]?.ToString();
+                        var msg = obj["msg"]?.ToString();
+                        CoreDebug.Log($"[Douyu] 签名服务 code={code} msg={msg} dataLen={data?.Length ?? 0}");
+                        if (code == 0)
+                        {
+                            return data;
+                        }
+                        return "";
+                    }
+                }
             }
-            return "";
+            catch (Exception ex)
+            {
+                CoreDebug.Log($"[Douyu] 签名服务异常 rid={rid} err={ex.GetType().FullName} 0x{ex.HResult:X8} {ex.Message}");
+                return "";
+            }
+        }
+
+        private static string TrimForLog(string value, int maxLen = 200)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return "";
+            }
+            if (value.Length <= maxLen)
+            {
+                return value;
+            }
+            return value.Substring(0, maxLen);
         }
 
         private static bool IsUwpRuntime()
