@@ -96,10 +96,33 @@ namespace AllLive.Core.Helper
                     }
                 }
                 List<KeyValuePair<string, string>> body = new List<KeyValuePair<string, string>>();
-                foreach (var item in data.Split('&'))
+                if (!string.IsNullOrEmpty(data))
                 {
-                    var splits = item.Split('=');
-                    body.Add(new KeyValuePair<string, string>(splits[0], splits[1]));
+                    foreach (var item in data.Split('&'))
+                    {
+                        if (string.IsNullOrEmpty(item))
+                        {
+                            continue;
+                        }
+                        var index = item.IndexOf('=');
+                        string key;
+                        string value;
+                        if (index < 0)
+                        {
+                            key = item;
+                            value = "";
+                        }
+                        else
+                        {
+                            key = item.Substring(0, index);
+                            value = index + 1 < item.Length ? item.Substring(index + 1) : "";
+                        }
+                        if (string.IsNullOrEmpty(key))
+                        {
+                            continue;
+                        }
+                        body.Add(new KeyValuePair<string, string>(key, value));
+                    }
                 }
                 FormUrlEncodedContent content = new FormUrlEncodedContent(body);
                 var result = await httpClient.PostAsync(url, content);

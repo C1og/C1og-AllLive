@@ -381,7 +381,12 @@ namespace AllLive.Core
         }
         public async Task<List<LivePlayQuality>> GetPlayQuality(LiveRoomDetail roomDetail)
         {
-            var data = roomDetail.Data.ToString();
+            var data = roomDetail.Data?.ToString();
+            if (string.IsNullOrWhiteSpace(data))
+            {
+                CoreDebug.Log($"[Douyu] GetPlayQuality中止: 播放参数为空 rid={roomDetail.RoomID}");
+                return new List<LivePlayQuality>();
+            }
             data += $"&cdn=&rate=0";
             CoreDebug.Log($"[Douyu] GetPlayQuality rid={roomDetail.RoomID} dataLen={data.Length}");
             List<LivePlayQuality> qualities = new List<LivePlayQuality>();

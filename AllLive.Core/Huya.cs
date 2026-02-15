@@ -169,6 +169,7 @@ namespace AllLive.Core
                         HlsAntiCode = item["sHlsAntiCode"].ToString(),
                         StreamName = item["sStreamName"].ToString(),
                         CdnType = cdnType,
+                        PresenterUid = item["lPresenterUid"].ToInt64(),
                     });
                     if (lineIndex == 0 && item is JObject firstObj)
                     {
@@ -445,10 +446,41 @@ namespace AllLive.Core
             var urls = new List<string>();
             foreach (var line in data.Lines)
             {
-                urls.Add(await GetRealUrl(line, data.BitRate));
+                var wupUrl = await GetRealUrl(line, data.BitRate);
+                if (!string.IsNullOrEmpty(wupUrl))
+                {
+                    urls.Add(wupUrl);
+                    CoreDebug.Log($"[Huya] Url[wup] {wupUrl}");
+                }
+                var legacyUrl = BuildLegacyUrl(line, data.BitRate, (roomDetail.Data as HuyaUrlDataModel)?.Uid);
+                if (!string.IsNullOrEmpty(legacyUrl))
+                {
+                    urls.Add(legacyUrl);
+                    CoreDebug.Log($"[Huya] Url[legacy] {legacyUrl}");
+                }
             }
 
             return urls;
+        }
+
+        private string BuildLegacyUrl(HuyaLineModel line, int bitrate, string uid)
+        {
+            if (string.IsNullOrEmpty(line?.FlvAntiCode) || string.IsNullOrEmpty(uid))
+            {
+                return null;
+            }
+            var src = line.Line;
+            if (string.IsNullOrEmpty(src) || string.IsNullOrEmpty(line.StreamName))
+            {
+                return null;
+            }
+            var param = ProcessAnticode(line.FlvAntiCode, uid, line.StreamName);
+            var url = $"{src}/{line.StreamName}.flv?{param}";
+            if (bitrate > 0)
+            {
+                url += $"&ratio={bitrate}";
+            }
+            return url;
         }
 
         private async Task<string> GetRealUrl(HuyaLineModel line, int bitrate)
@@ -456,6 +488,8 @@ namespace AllLive.Core
             HYGetCdnTokenReq req = new HYGetCdnTokenReq();
             req.stream_name = line.StreamName;
             req.cdn_type = line.CdnType;
+            req.presenter_uid = line.PresenterUid;
+            req.url = line.Line;
             CoreDebug.Log($"[Huya] GetRealUrl line={line.Line} stream={line.StreamName} cdnType={line.CdnType} bitrate={bitrate}");
             var resp = await tupHttpHelper.GetAsync(req, "getCdnTokenInfo", new HYGetCdnTokenResp());
             CoreDebug.Log($"[Huya] TokenResp stream={resp.stream_name} cdn={resp.cdn_type} flvAntiLen={resp.flv_anti_code?.Length ?? 0} hlsAntiLen={resp.hls_anti_code?.Length ?? 0} urlLen={resp.url?.Length ?? 0}");
@@ -517,6 +551,7 @@ namespace AllLive.Core
         public string StreamName { get; set; }
         public string HlsAntiCode { get; set; }
         public string CdnType { get; set; }
+        public long PresenterUid { get; set; }
         public HuyaLineType LineType { get; set; }
     }
     public class HuyaBitRateModel

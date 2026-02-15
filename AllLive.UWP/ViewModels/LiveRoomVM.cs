@@ -271,6 +271,19 @@ namespace AllLive.UWP.ViewModels
                         //HDR无法播放
                         qualities = qualities.Where(x => !x.Quality.Contains("HDR")).ToList();
                     }
+                    if (qualities == null || qualities.Count == 0)
+                    {
+                        LogHelper.Log($"获取清晰度失败: 返回空列表。站点:{Site?.Name} 房间ID:{RoomID}", LogType.ERROR);
+                        if (Site?.Name == "斗鱼直播")
+                        {
+                            Utils.ShowMessageToast("斗鱼签名服务不可用，无法获取播放地址");
+                        }
+                        else
+                        {
+                            Utils.ShowMessageToast("加载清晰度失败");
+                        }
+                        return;
+                    }
                     Qualities = qualities;
                     if (Qualities != null && Qualities.Count > 0)
                     {

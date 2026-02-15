@@ -73,7 +73,7 @@ namespace AllLive.UWP.Views
         private DateTimeOffset? lastMediaOpenedUtc;
         private DateTimeOffset? lastPlaybackStartUtc;
         private string lastPlaybackUrl;
-        private static readonly TimeSpan EarlyEndThreshold = TimeSpan.FromSeconds(5);
+        private static readonly TimeSpan EarlyEndThreshold = TimeSpan.FromSeconds(8);
 
         public LiveRoomPage()
         {
