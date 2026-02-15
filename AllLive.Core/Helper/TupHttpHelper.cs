@@ -41,6 +41,7 @@ namespace AllLive.Core.Helper
                 var response = await httpClient.PostAsync("", reqContent);
 
                 var responseBytes= await response.Content.ReadAsByteArrayAsync();
+                CoreDebug.Log($"[Tars] {function} status={(int)response.StatusCode} len={responseBytes?.Length ?? 0}");
              
                 TarsUniPacket respPack =new TarsUniPacket();
                 respPack.Decode(responseBytes);
@@ -48,8 +49,9 @@ namespace AllLive.Core.Helper
                 result = respPack.Get<Resp>("tRsp", result);
                 return result;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                CoreDebug.Log($"[Tars] {function} 请求失败: {ex.GetType().FullName} {ex.Message}");
                 return result;
             }
         }

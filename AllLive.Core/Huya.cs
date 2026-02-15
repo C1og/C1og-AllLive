@@ -8,6 +8,7 @@ using AllLive.Core.Helper;
 using Newtonsoft.Json.Linq;
 using System.Text.RegularExpressions;
 using System.Text;
+using System.Globalization;
 using System.Linq;
 using System.Net.WebSockets;
 using System.Web;
@@ -149,14 +150,17 @@ namespace AllLive.Core
 
             var uid = await GetUid();
             var uuid = GetUuid();
+            CoreDebug.Log($"[Huya] GetRoomDetail roomId={roomId} uid={uid} uuid={uuid}");
             var huyaLines = new List<HuyaLineModel>();
             var huyaBiterates = new List<HuyaBitRateModel>();
             //读取可用线路
             var lines = jsonObj["roomInfo"]["tLiveInfo"]["tLiveStreamInfo"]["vStreamInfo"]["value"];
+            var lineIndex = 0;
             foreach (var item in lines)
             {
                 if (!string.IsNullOrEmpty(item["sFlvUrl"]?.ToString()))
                 {
+                    var cdnType = item["sCdnType"]?.ToString();
                     huyaLines.Add(new HuyaLineModel()
                     {
                         Line = item["sFlvUrl"].ToString(),
@@ -164,7 +168,15 @@ namespace AllLive.Core
                         FlvAntiCode = item["sFlvAntiCode"].ToString(),
                         HlsAntiCode = item["sHlsAntiCode"].ToString(),
                         StreamName = item["sStreamName"].ToString(),
+                        CdnType = cdnType,
                     });
+                    if (lineIndex == 0 && item is JObject firstObj)
+                    {
+                        var keys = string.Join(",", firstObj.Properties().Select(p => p.Name));
+                        CoreDebug.Log($"[Huya] StreamInfo keys: {keys}");
+                    }
+                    CoreDebug.Log($"[Huya] Line[{lineIndex}] url={item["sFlvUrl"]} stream={item["sStreamName"]} cdnType={cdnType}");
+                    lineIndex++;
                 }
                 //HLS效果不好，暂不使用
                 //if (!string.IsNullOrEmpty(item["sHlsUrl"]?.ToString()))
@@ -193,6 +205,7 @@ namespace AllLive.Core
                     Name = item["sDisplayName"].ToString(),
                 });
             }
+            CoreDebug.Log($"[Huya] Lines={huyaLines.Count} BitRates={huyaBiterates.Count}");
             var realRoomId = jsonObj["roomInfo"]["tLiveInfo"]["lProfileRoom"].ToInt32();
             if (realRoomId == 0)
             {
@@ -443,8 +456,29 @@ namespace AllLive.Core
             HYGetCdnTokenReq req = new HYGetCdnTokenReq();
             req.stream_name = line.StreamName;
             req.cdn_type = line.CdnType;
-
+            CoreDebug.Log($"[Huya] GetRealUrl line={line.Line} stream={line.StreamName} cdnType={line.CdnType} bitrate={bitrate}");
             var resp = await tupHttpHelper.GetAsync(req, "getCdnTokenInfo", new HYGetCdnTokenResp());
+            CoreDebug.Log($"[Huya] TokenResp stream={resp.stream_name} cdn={resp.cdn_type} flvAntiLen={resp.flv_anti_code?.Length ?? 0} hlsAntiLen={resp.hls_anti_code?.Length ?? 0} urlLen={resp.url?.Length ?? 0}");
+            if (!string.IsNullOrEmpty(resp.flv_anti_code))
+            {
+                var query = HttpUtility.ParseQueryString(resp.flv_anti_code);
+                var wsTime = query["wsTime"];
+                if (!string.IsNullOrEmpty(wsTime) && long.TryParse(wsTime, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var seconds))
+                {
+                    var dt = DateTimeOffset.FromUnixTimeSeconds(seconds);
+                    var remain = (dt - DateTimeOffset.UtcNow).TotalSeconds;
+                    CoreDebug.Log($"[Huya] Token wsTime={wsTime} exp={dt:O} remain={remain:F0}s");
+                }
+                var wsSecret = query["wsSecret"];
+                if (!string.IsNullOrEmpty(wsSecret))
+                {
+                    CoreDebug.Log($"[Huya] Token wsSecretLen={wsSecret.Length}");
+                }
+            }
+            else if (!string.IsNullOrEmpty(line.FlvAntiCode))
+            {
+                CoreDebug.Log("[Huya] TokenResp flv_anti_code为空，line.FlvAntiCode有值");
+            }
             var url =$"{line.Line}/{resp.stream_name}.flv?{resp.flv_anti_code}&codec=264";
             if (bitrate > 0)
             {

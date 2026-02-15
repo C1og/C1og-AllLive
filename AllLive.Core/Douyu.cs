@@ -11,9 +11,6 @@ using System.Xml.Linq;
 using System.Linq;
 
 
-#if !WINDOWS_UWP
-using QuickJS;
-#endif
 /*
  * 参考：
  * https://github.com/wbt5/real-url/blob/master/douyu.py
@@ -153,64 +150,157 @@ namespace AllLive.Core
 
         private async Task<string> GetPlayArgs(string html, string rid)
         {
+            var rawLen = html?.Length ?? 0;
             //取加密的js
             html = Regex.Match(html, @"(vdwdae325w_64we[\s\S]*function ub98484234[\s\S]*?)function").Groups[1].Value;
             html = Regex.Replace(html, @"eval.*?;}", "strc;}");
-            var vaa= Environment.CurrentDirectory ;
+            CoreDebug.Log($"[Douyu] GetPlayArgs rid={rid} rawLen={rawLen} jsLen={html?.Length ?? 0} uwp={IsUwpRuntime()}");
+            if (string.IsNullOrEmpty(html))
+            {
+                CoreDebug.Log("[Douyu] GetPlayArgs: 签名JS提取为空");
+            }
 
             if (IsUwpRuntime())
             {
-                return await GetPlayArgsByService(html, rid);
+                return await GetPlayArgsByService(html, rid, "uwp");
             }
 
-#if !WINDOWS_UWP
-            try
+            var quickJsResult = TryGetPlayArgsByQuickJs(html, rid, out var quickJsError);
+            if (!string.IsNullOrEmpty(quickJsResult))
             {
-                using (QuickJSRuntime runtime = new QuickJSRuntime())
-                using (QuickJSContext context = runtime.CreateContext())
-                {
-                    var did = "10000000000000000000000000001501";
-                    var time = Core.Helper.Utils.GetTimestamp();
-
-                    context.Eval(html, "", JSEvalFlags.Global);
-                    //调用ub98484234函数，返回格式化后的js
-                    var jsCode = context.Eval("ub98484234()", "", JSEvalFlags.Global).ToString();
-
-                    var v = Regex.Match(jsCode, @"v=(\d+)").Groups[1].Value;
-                    //对参数进行MD5，替换掉JS的CryptoJS\.MD5
-                    var rb = Core.Helper.Utils.ToMD5(rid + did + time + v);
-
-                    var jsCode2 = Regex.Replace(jsCode, @"return rt;}\);?", "return rt;}");
-                    //设置方法名为sign
-                    jsCode2 = Regex.Replace(jsCode2, @"\(function \(", "function sign(");
-                    //将JS中的MD5方法直接替换成加密完成的rb
-                    jsCode2 = Regex.Replace(jsCode2, @"CryptoJS\.MD5\(cb\)\.toString\(\)", $@"""{rb}""");
-                    context.Eval(jsCode2, "", JSEvalFlags.Global);
-                    //返回参数
-                    var args = context.Eval($"sign('{rid}','{did}','{time}')", "", JSEvalFlags.Global).ToString();
-                    return args;
-                }
+                CoreDebug.Log($"[Douyu] QuickJS签名成功 len={quickJsResult.Length}");
+                return quickJsResult;
             }
-            catch
+            if (!string.IsNullOrEmpty(quickJsError))
             {
-                // fallback to service
+                CoreDebug.Log($"[Douyu] QuickJS签名失败: {quickJsError}");
             }
-#endif
-            return await GetPlayArgsByService(html, rid);
+            return await GetPlayArgsByService(html, rid, "fallback");
         }
 
-        private static async Task<string> GetPlayArgsByService(string html, string rid)
+        private static string TryGetPlayArgsByQuickJs(string html, string rid, out string error)
+        {
+            error = null;
+            object runtime = null;
+            object context = null;
+            try
+            {
+                var runtimeType = Type.GetType("QuickJS.QuickJSRuntime, QuickJS.NET");
+                if (runtimeType == null)
+                {
+                    error = "QuickJSRuntime类型未找到";
+                    return null;
+                }
+                runtime = Activator.CreateInstance(runtimeType);
+                var createContext = runtimeType.GetMethod("CreateContext", Type.EmptyTypes);
+                context = createContext?.Invoke(runtime, null);
+                if (context == null)
+                {
+                    error = "CreateContext返回空";
+                    return null;
+                }
+
+                var contextType = context.GetType();
+                var flagsType = Type.GetType("QuickJS.JSEvalFlags, QuickJS.NET");
+                object flags = null;
+                var evalMethod = flagsType == null
+                    ? null
+                    : contextType.GetMethod("Eval", new[] { typeof(string), typeof(string), flagsType });
+                if (evalMethod == null)
+                {
+                    evalMethod = contextType.GetMethod("Eval", new[] { typeof(string), typeof(string) });
+                }
+                if (evalMethod == null)
+                {
+                    error = "Eval方法未找到";
+                    return null;
+                }
+                if (flagsType != null && evalMethod.GetParameters().Length == 3)
+                {
+                    flags = Enum.Parse(flagsType, "Global");
+                }
+
+                string Eval(string code)
+                {
+                    if (evalMethod.GetParameters().Length == 3)
+                    {
+                        return evalMethod.Invoke(context, new object[] { code, "", flags })?.ToString();
+                    }
+                    return evalMethod.Invoke(context, new object[] { code, "" })?.ToString();
+                }
+
+                var did = "10000000000000000000000000001501";
+                var time = Core.Helper.Utils.GetTimestamp();
+
+                Eval(html);
+                var jsCode = Eval("ub98484234()");
+                if (string.IsNullOrEmpty(jsCode))
+                {
+                    error = "ub98484234返回空";
+                    return null;
+                }
+
+                var v = Regex.Match(jsCode, @"v=(\d+)").Groups[1].Value;
+                if (string.IsNullOrEmpty(v))
+                {
+                    error = "签名JS中未提取到v";
+                    return null;
+                }
+                //对参数进行MD5，替换掉JS的CryptoJS\.MD5
+                var rb = Core.Helper.Utils.ToMD5(rid + did + time + v);
+
+                var jsCode2 = Regex.Replace(jsCode, @"return rt;}\);?", "return rt;}");
+                //设置方法名为sign
+                jsCode2 = Regex.Replace(jsCode2, @"\(function \(", "function sign(");
+                //将JS中的MD5方法直接替换成加密完成的rb
+                jsCode2 = Regex.Replace(jsCode2, @"CryptoJS\.MD5\(cb\)\.toString\(\)", $@"""{rb}""");
+                Eval(jsCode2);
+                //返回参数
+                var args = Eval($"sign('{rid}','{did}','{time}')");
+                if (string.IsNullOrEmpty(args))
+                {
+                    error = "sign返回空";
+                    return null;
+                }
+                return args;
+            }
+            catch (Exception ex)
+            {
+                error = $"{ex.GetType().FullName}: {ex.Message}";
+                return null;
+            }
+            finally
+            {
+                if (context is IDisposable contextDisposable)
+                {
+                    contextDisposable.Dispose();
+                }
+                if (runtime is IDisposable runtimeDisposable)
+                {
+                    runtimeDisposable.Dispose();
+                }
+            }
+        }
+
+        private static async Task<string> GetPlayArgsByService(string html, string rid, string reason)
         {
             var jsonObj = new
             {
                 html = html,
                 rid = rid
             };
-            var result = await HttpUtil.PostJsonString("http://alive.nsapps.cn/api/AllLive/DouyuSign", Newtonsoft.Json.JsonConvert.SerializeObject(jsonObj));
+            var payload = Newtonsoft.Json.JsonConvert.SerializeObject(jsonObj);
+            CoreDebug.Log($"[Douyu] 调用签名服务 reason={reason} payloadLen={payload.Length}");
+            var result = await HttpUtil.PostJsonString("http://alive.nsapps.cn/api/AllLive/DouyuSign", payload);
+            CoreDebug.Log($"[Douyu] 签名服务响应 len={result?.Length ?? 0}");
             var obj = JObject.Parse(result);
-            if (obj["code"].ToInt32() == 0)
+            var code = obj["code"].ToInt32();
+            var data = obj["data"]?.ToString();
+            var msg = obj["msg"]?.ToString();
+            CoreDebug.Log($"[Douyu] 签名服务 code={code} msg={msg} dataLen={data?.Length ?? 0}");
+            if (code == 0)
             {
-                return obj["data"].ToString();
+                return data;
             }
             return "";
         }
@@ -255,9 +345,11 @@ namespace AllLive.Core
         {
             var data = roomDetail.Data.ToString();
             data += $"&cdn=&rate=0";
+            CoreDebug.Log($"[Douyu] GetPlayQuality rid={roomDetail.RoomID} dataLen={data.Length}");
             List<LivePlayQuality> qualities = new List<LivePlayQuality>();
             var result = await HttpUtil.PostString($"https://www.douyu.com/lapi/live/getH5Play/{ roomDetail.RoomID}", data);
             var obj = JObject.Parse(result);
+            CoreDebug.Log($"[Douyu] GetPlayQuality resp error={obj["error"]} msg={obj["msg"]} cdnCount={(obj["data"]?["cdnsWithName"] as JArray)?.Count ?? 0} rateCount={(obj["data"]?["multirates"] as JArray)?.Count ?? 0}");
             var cdns = new List<string>();
             foreach (var item in obj["data"]["cdnsWithName"])
             {
@@ -308,11 +400,12 @@ namespace AllLive.Core
                 args += $"&cdn={cdn}&rate={rate}";
                 var result = await HttpUtil.PostString($"https://www.douyu.com/lapi/live/getH5Play/{rid}", args);
                 var obj = JObject.Parse(result);
+                CoreDebug.Log($"[Douyu] GetUrl rid={rid} cdn={cdn} rate={rate} error={obj["error"]} msg={obj["msg"]}");
                 return obj["data"]["rtmp_url"].ToString() + "/" + System.Net.WebUtility.HtmlDecode(obj["data"]["rtmp_live"].ToString());
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-
+                CoreDebug.Log($"[Douyu] GetUrl失败 rid={rid} cdn={cdn} rate={rate} err={ex.GetType().FullName}: {ex.Message}");
                 return "";
             }
 

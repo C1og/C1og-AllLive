@@ -1,4 +1,5 @@
 ﻿using AllLive.UWP.Helper;
+using AllLive.Core.Helper;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -35,6 +36,7 @@ namespace AllLive.UWP
         {
 
             this.InitializeComponent();
+            CoreDebug.Logger = message => LogHelper.Log(message, LogType.DEBUG);
             if (Utils.IsXbox && SettingHelper.GetValue<int>(SettingHelper.XBOX_MODE, 0) == 0)
             {
                 this.RequiresPointerMode = Windows.UI.Xaml.ApplicationRequiresPointerMode.WhenRequested;

@@ -69,6 +69,7 @@ namespace AllLive.UWP.Views
         private Task diagnosticsSnapshotTask;
         private DateTimeOffset? lastHuyaRefreshUtc;
         private static readonly TimeSpan HuyaRefreshCooldown = TimeSpan.FromSeconds(30);
+        private MediaPlaybackState? lastPlaybackState;
 
         public LiveRoomPage()
         {
@@ -192,6 +193,11 @@ namespace AllLive.UWP.Views
         {
             await this.Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, () =>
             {
+                var sessionSnapshot = BuildPlaybackSessionSnapshot(sender?.PlaybackSession);
+                if (!string.IsNullOrEmpty(sessionSnapshot))
+                {
+                    LogHelper.Log($"媒体播放结束\n{sessionSnapshot}", LogType.DEBUG);
+                }
                 if (TryRefreshHuyaPlayUrls("播放结束"))
                 {
                     return;
@@ -250,6 +256,11 @@ namespace AllLive.UWP.Views
                         extra.AppendLine($"ExtendedMessage: {args.ExtendedErrorCode.Message}");
                     }
                 }
+                var sessionSnapshot = BuildPlaybackSessionSnapshot(sender?.PlaybackSession);
+                if (!string.IsNullOrEmpty(sessionSnapshot))
+                {
+                    extra.AppendLine(sessionSnapshot);
+                }
                 var mergedExtra = JoinNonEmpty(lastConfigSnapshot, lastUrlAnalysis, lastProbeSnapshot, extra.ToString().TrimEnd());
                 LogPlayError("播放器播放失败", args.ExtendedErrorCode, mergedExtra);
                 PlayError();
@@ -272,6 +283,15 @@ namespace AllLive.UWP.Views
         {
             await this.Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, () =>
             {
+                if (sender != null && lastPlaybackState != sender.PlaybackState)
+                {
+                    lastPlaybackState = sender.PlaybackState;
+                    var sessionSnapshot = BuildPlaybackSessionSnapshot(sender);
+                    if (!string.IsNullOrEmpty(sessionSnapshot))
+                    {
+                        LogHelper.Log($"播放状态变更: {sender.PlaybackState}\n{sessionSnapshot}", LogType.DEBUG);
+                    }
+                }
                 switch (sender.PlaybackState)
                 {
                     case MediaPlaybackState.None:
@@ -652,6 +672,24 @@ namespace AllLive.UWP.Views
             {
                 return $"URL分析失败: {BuildExceptionSummary(ex)}";
             }
+        }
+        private string BuildPlaybackSessionSnapshot(MediaPlaybackSession session)
+        {
+            if (session == null)
+            {
+                return null;
+            }
+            var sb = new StringBuilder();
+            sb.AppendLine("PlaybackSession:");
+            sb.AppendLine($"State: {session.PlaybackState}");
+            sb.AppendLine($"Position: {session.Position}");
+            sb.AppendLine($"NaturalDuration: {session.NaturalDuration}");
+            sb.AppendLine($"BufferingProgress: {session.BufferingProgress:P}");
+            sb.AppendLine($"DownloadProgress: {session.DownloadProgress:P}");
+            sb.AppendLine($"CanSeek: {session.CanSeek}");
+            sb.AppendLine($"IsLive: {session.IsLive}");
+            sb.AppendLine($"PlaybackRate: {session.PlaybackRate}");
+            return sb.ToString().TrimEnd();
         }
         private static bool TryParseUnixSeconds(string value, out DateTimeOffset dt)
         {

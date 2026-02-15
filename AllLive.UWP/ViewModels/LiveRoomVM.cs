@@ -14,6 +14,7 @@ using Windows.UI.Xaml;
 using Windows.ApplicationModel.Core;
 using System.ComponentModel;
 using System.Timers;
+using Windows.Foundation;
 
 namespace AllLive.UWP.ViewModels
 {
@@ -388,6 +389,11 @@ namespace AllLive.UWP.ViewModels
                     Utils.ShowMessageToast("加载播放地址失败");
                     return;
                 }
+                var debugSnapshot = BuildPlayUrlDebug(data);
+                if (!string.IsNullOrEmpty(debugSnapshot))
+                {
+                    LogHelper.Log(debugSnapshot, LogType.DEBUG);
+                }
                 List<PlayurlLine> ls = new List<PlayurlLine>();
                 for (int i = 0; i < data.Count; i++)
                 {
@@ -410,6 +416,139 @@ namespace AllLive.UWP.ViewModels
 
 
 
+        }
+
+        private string BuildPlayUrlDebug(List<string> urls)
+        {
+            if (urls == null)
+            {
+                return null;
+            }
+            var sb = new StringBuilder();
+            sb.AppendLine($"播放地址生成:");
+            sb.AppendLine($"站点: {Site?.Name}");
+            sb.AppendLine($"房间ID: {RoomID}");
+            sb.AppendLine($"清晰度: {CurrentQuality?.Quality}");
+            sb.AppendLine($"数量: {urls.Count}");
+            var index = 1;
+            foreach (var url in urls)
+            {
+                sb.AppendLine(BuildSingleUrlDebug(url, index));
+                index++;
+            }
+            return sb.ToString().TrimEnd();
+        }
+
+        private string BuildSingleUrlDebug(string url, int index)
+        {
+            if (string.IsNullOrEmpty(url))
+            {
+                return $"线路{index}: 空";
+            }
+            try
+            {
+                var uri = new Uri(url);
+                var sb = new StringBuilder();
+                sb.AppendLine($"线路{index}: {uri.Scheme}://{uri.Host}{uri.AbsolutePath}");
+                sb.AppendLine($"长度: {url.Length}");
+                if (!string.IsNullOrEmpty(uri.Query))
+                {
+                    var decoder = new WwwFormUrlDecoder(uri.Query);
+                    foreach (var item in decoder)
+                    {
+                        if (string.Equals(item.Name, "wsTime", StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (TryParseHexUnixSeconds(item.Value, out var dt))
+                            {
+                                sb.AppendLine($"{item.Name}={item.Value} (hex-> {dt:O}, 剩余 {(dt - DateTimeOffset.UtcNow).TotalSeconds:F0}s)");
+                            }
+                            else
+                            {
+                                sb.AppendLine($"{item.Name}={item.Value}");
+                            }
+                        }
+                        else if (string.Equals(item.Name, "expires", StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(item.Name, "deadline", StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(item.Name, "wts", StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (TryParseUnixSeconds(item.Value, out var dt))
+                            {
+                                sb.AppendLine($"{item.Name}={item.Value} ({dt:O}, 剩余 {(dt - DateTimeOffset.UtcNow).TotalSeconds:F0}s)");
+                            }
+                            else
+                            {
+                                sb.AppendLine($"{item.Name}={item.Value}");
+                            }
+                        }
+                        else if (string.Equals(item.Name, "wsSecret", StringComparison.OrdinalIgnoreCase))
+                        {
+                            sb.AppendLine($"{item.Name}Len={item.Value?.Length ?? 0}");
+                        }
+                        else if (string.Equals(item.Name, "fm", StringComparison.OrdinalIgnoreCase))
+                        {
+                            sb.AppendLine($"{item.Name}Len={item.Value?.Length ?? 0}");
+                        }
+                        else if (string.Equals(item.Name, "codec", StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(item.Name, "ratio", StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(item.Name, "cdn", StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(item.Name, "seqid", StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(item.Name, "uid", StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(item.Name, "uuid", StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(item.Name, "t", StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(item.Name, "sv", StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(item.Name, "fs", StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(item.Name, "ctype", StringComparison.OrdinalIgnoreCase))
+                        {
+                            sb.AppendLine($"{item.Name}={item.Value}");
+                        }
+                    }
+                }
+                return sb.ToString().TrimEnd();
+            }
+            catch (Exception ex)
+            {
+                return $"线路{index}: 解析失败 {ex.GetType().FullName} {ex.Message}";
+            }
+        }
+
+        private static bool TryParseUnixSeconds(string value, out DateTimeOffset dt)
+        {
+            dt = default;
+            if (long.TryParse(value, out var seconds))
+            {
+                try
+                {
+                    if (seconds > 0)
+                    {
+                        dt = DateTimeOffset.FromUnixTimeSeconds(seconds);
+                        return true;
+                    }
+                }
+                catch
+                {
+                }
+            }
+            return false;
+        }
+
+        private static bool TryParseHexUnixSeconds(string value, out DateTimeOffset dt)
+        {
+            dt = default;
+            if (long.TryParse(value, System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out var seconds))
+            {
+                try
+                {
+                    if (seconds > 0)
+                    {
+                        dt = DateTimeOffset.FromUnixTimeSeconds(seconds);
+                        return true;
+                    }
+                }
+                catch
+                {
+                }
+            }
+            return false;
         }
 
         public async void LoadSuperChat()
