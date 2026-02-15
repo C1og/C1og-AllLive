@@ -122,6 +122,7 @@ jobs:
 
           $signingArgs = @()
           $certificatePath = $null
+          $certExportPath = $null
 
           try {
             if ([string]::IsNullOrWhiteSpace($env:KEYSTORE_BASE64) -or [string]::IsNullOrWhiteSpace($env:KEY_PASSWORD)) {
@@ -142,11 +143,15 @@ jobs:
               )
               Write-Host "Subject: $($cert.Subject)"
               Write-Host "Thumbprint: $($cert.Thumbprint)"
-              $signingArgs += "/p:GenerateTemporaryStoreCertificate=true"
+              $signingArgs += "/p:GenerateTemporaryStoreCertificate=false"
               $signingArgs += "/p:PackageCertificateKeyFile=$certificatePath"
               $signingArgs += "/p:PackageCertificatePassword=$env:KEY_PASSWORD"
               $signingArgs += "/p:PackageCertificateThumbprint=$($cert.Thumbprint)"
-              $signingArgs += "/p:PackagePublisher=CN=$($cert.Thumbprint)"
+              $signingArgs += "/p:PackagePublisher=$($cert.Subject)"
+
+              $certExportPath = Join-Path -Path $env:RUNNER_TEMP -ChildPath "AllLive.cer"
+              $cerBytes = $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)
+              [IO.File]::WriteAllBytes($certExportPath, $cerBytes)
             }
 
             $windowsSdkVersion = "$env:WINDOWS_SDK_VERSION"
@@ -170,6 +175,14 @@ jobs:
 
             & $msbuild @args
             if ($LASTEXITCODE -ne 0) { throw "MSBuild failed with exit code $LASTEXITCODE" }
+
+            if ($certExportPath -and (Test-Path $certExportPath)) {
+              $appPackagesDir = Join-Path -Path $PWD -ChildPath "AllLive.UWP\AppPackages"
+              if (-not (Test-Path $appPackagesDir)) {
+                New-Item -ItemType Directory -Path $appPackagesDir -Force | Out-Null
+              }
+              Copy-Item -Path $certExportPath -Destination (Join-Path $appPackagesDir "AllLive.cer") -Force
+            }
           }
           finally {
             if ($certificatePath -and (Test-Path $certificatePath)) {
