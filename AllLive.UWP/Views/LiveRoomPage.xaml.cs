@@ -681,14 +681,25 @@ namespace AllLive.UWP.Views
             }
             var sb = new StringBuilder();
             sb.AppendLine("PlaybackSession:");
-            sb.AppendLine($"State: {session.PlaybackState}");
-            sb.AppendLine($"Position: {session.Position}");
-            sb.AppendLine($"NaturalDuration: {session.NaturalDuration}");
-            sb.AppendLine($"BufferingProgress: {session.BufferingProgress:P}");
-            sb.AppendLine($"DownloadProgress: {session.DownloadProgress:P}");
-            sb.AppendLine($"CanSeek: {session.CanSeek}");
-            sb.AppendLine($"PlaybackRate: {session.PlaybackRate}");
+            AppendPlaybackValue(sb, "State", () => session.PlaybackState.ToString());
+            AppendPlaybackValue(sb, "Position", () => session.Position.ToString());
+            AppendPlaybackValue(sb, "NaturalDuration", () => session.NaturalDuration.ToString());
+            AppendPlaybackValue(sb, "BufferingProgress", () => session.BufferingProgress.ToString("P"));
+            AppendPlaybackValue(sb, "DownloadProgress", () => session.DownloadProgress.ToString("P"));
+            AppendPlaybackValue(sb, "CanSeek", () => session.CanSeek.ToString());
+            AppendPlaybackValue(sb, "PlaybackRate", () => session.PlaybackRate.ToString());
             return sb.ToString().TrimEnd();
+        }
+        private void AppendPlaybackValue(StringBuilder sb, string name, Func<string> getter)
+        {
+            try
+            {
+                sb.AppendLine($"{name}: {getter()}");
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine($"{name}: <err {ex.GetType().Name} 0x{ex.HResult:X8}>");
+            }
         }
         private static bool TryParseUnixSeconds(string value, out DateTimeOffset dt)
         {
