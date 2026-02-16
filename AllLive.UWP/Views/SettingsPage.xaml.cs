@@ -124,6 +124,30 @@ namespace AllLive.UWP.Views
                     SettingHelper.SetValue(SettingHelper.MOUSE_BACK, swMouseClosePage.IsOn);
                 });
             });
+
+            //关注列表自动刷新间隔
+            var favoriteRefreshMinutes = SettingHelper.GetValue<int>(SettingHelper.FAVORITE_AUTO_REFRESH_MINUTES, 5);
+            if (favoriteRefreshMinutes < 1)
+            {
+                favoriteRefreshMinutes = 5;
+            }
+            numFavoriteRefreshInterval.Value = favoriteRefreshMinutes;
+            numFavoriteRefreshInterval.Loaded += new RoutedEventHandler((sender, e) =>
+            {
+                numFavoriteRefreshInterval.ValueChanged += new TypedEventHandler<NumberBox, NumberBoxValueChangedEventArgs>((obj, args) =>
+                {
+                    if (double.IsNaN(args.NewValue))
+                    {
+                        return;
+                    }
+                    var minutes = Convert.ToInt32(args.NewValue);
+                    if (minutes < 1)
+                    {
+                        minutes = 1;
+                    }
+                    SettingHelper.SetValue(SettingHelper.FAVORITE_AUTO_REFRESH_MINUTES, minutes);
+                });
+            });
             //视频解码
             cbDecoder.SelectedIndex = SettingHelper.GetValue<int>(SettingHelper.VIDEO_DECODER, 1);
             cbDecoder.Loaded += new RoutedEventHandler((sender, e) =>

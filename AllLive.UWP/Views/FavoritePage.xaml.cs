@@ -26,6 +26,8 @@ namespace AllLive.UWP.Views
     public sealed partial class FavoritePage : Page
     {
         readonly FavoriteVM favoriteVM;
+        private DispatcherTimer autoRefreshTimer;
+        private int autoRefreshMinutes;
         public FavoritePage()
         {
             favoriteVM = new FavoriteVM();
@@ -48,6 +50,13 @@ namespace AllLive.UWP.Views
                 favoriteVM.LoadData();
             }
 
+            StartAutoRefreshTimer();
+        }
+
+        protected override void OnNavigatedFrom(NavigationEventArgs e)
+        {
+            base.OnNavigatedFrom(e);
+            StopAutoRefreshTimer();
         }
 
         private void ls_ItemClick(object sender, ItemClickEventArgs e)
@@ -64,6 +73,51 @@ namespace AllLive.UWP.Views
         {
             var item = (sender as MenuFlyoutItem).DataContext as FavoriteItem;
             favoriteVM.RemoveItem(item);
+        }
+
+        private void StartAutoRefreshTimer()
+        {
+            autoRefreshMinutes = GetAutoRefreshMinutes();
+            if (autoRefreshTimer == null)
+            {
+                autoRefreshTimer = new DispatcherTimer();
+                autoRefreshTimer.Tick += AutoRefreshTimer_Tick;
+            }
+            autoRefreshTimer.Interval = TimeSpan.FromMinutes(autoRefreshMinutes);
+            autoRefreshTimer.Start();
+        }
+
+        private void StopAutoRefreshTimer()
+        {
+            if (autoRefreshTimer != null)
+            {
+                autoRefreshTimer.Stop();
+            }
+        }
+
+        private void AutoRefreshTimer_Tick(object sender, object e)
+        {
+            var minutes = GetAutoRefreshMinutes();
+            if (minutes != autoRefreshMinutes)
+            {
+                autoRefreshMinutes = minutes;
+                autoRefreshTimer.Interval = TimeSpan.FromMinutes(autoRefreshMinutes);
+            }
+            if (favoriteVM.Loading || favoriteVM.LoaddingLiveStatus)
+            {
+                return;
+            }
+            favoriteVM.Refresh();
+        }
+
+        private static int GetAutoRefreshMinutes()
+        {
+            var minutes = SettingHelper.GetValue<int>(SettingHelper.FAVORITE_AUTO_REFRESH_MINUTES, 5);
+            if (minutes < 1)
+            {
+                minutes = 5;
+            }
+            return minutes;
         }
     }
 }

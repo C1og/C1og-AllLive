@@ -98,6 +98,27 @@
                             HorizontalAlignment="Right"
                             VerticalAlignment="Center" />
                     </Grid>
+                    <Grid
+                        x:Name="SettingsFavoriteAutoRefresh"
+                        Margin="0,8,0,0"
+                        Padding="8,12"
+                        Background="{ThemeResource LayerFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="4">
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock>关注列表自动刷新</TextBlock>
+                            <TextBlock FontSize="12" Foreground="Gray">设置自动刷新间隔（分钟）</TextBlock>
+                        </StackPanel>
+                        <my:NumberBox
+                            x:Name="numFavoriteRefreshInterval"
+                            Width="100"
+                            HorizontalAlignment="Right"
+                            Maximum="120"
+                            Minimum="1"
+                            PlaceholderText="分钟"
+                            SpinButtonPlacementMode="Compact" />
+                    </Grid>
 
                     <TextBlock Margin="4,12" FontSize="18">播放</TextBlock>
                     <Grid

@@ -49,6 +49,11 @@ namespace AllLive.UWP.Helper
         public const string MOUSE_BACK = "MouseBack";
 
         /// <summary>
+        /// 关注列表自动刷新间隔（分钟）
+        /// </summary>
+        public const string FAVORITE_AUTO_REFRESH_MINUTES = "FavoriteAutoRefreshMinutes";
+
+        /// <summary>
         /// 视频解码
         /// </summary>
         public const string VIDEO_DECODER = "VideoDecoder";
