@@ -260,8 +260,8 @@
                             VerticalAlignment="Center"
                             PlaceholderText="填写 Cookie"
                             TextWrapping="NoWrap"
-                            HorizontalScrollBarVisibility="Auto"
-                            VerticalScrollBarVisibility="Disabled" />
+                            ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                            ScrollViewer.VerticalScrollBarVisibility="Disabled" />
                     </Grid>
                     <TextBlock Margin="4,12" FontSize="18">互动</TextBlock>
                     <Grid
