@@ -8,6 +8,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Runtime.InteropServices.WindowsRuntime;
 using Windows.Foundation;
 using Windows.Foundation.Collections;
@@ -131,16 +132,27 @@ namespace AllLive.UWP.Views
                 });
             });
 
+            swDouyuSignService.IsOn = SettingHelper.GetValue<bool>(SettingHelper.DOUYU_SIGN_ENABLED, true);
+            swDouyuSignService.Toggled += new RoutedEventHandler((obj, args) =>
+            {
+                SettingHelper.SetValue(SettingHelper.DOUYU_SIGN_ENABLED, swDouyuSignService.IsOn);
+                txtDouyuSignUrl.IsEnabled = swDouyuSignService.IsOn;
+                ApplyDouyuSignServiceSetting(txtDouyuSignUrl.Text, swDouyuSignService.IsOn);
+                _ = UpdateDouyuSignStatusAsync();
+            });
+
             //斗鱼签名服务地址
-            txtDouyuSignUrl.Text = SettingHelper.GetValue<string>(SettingHelper.DOUYU_SIGN_URL, "");
-            ApplyDouyuSignServiceSetting(txtDouyuSignUrl.Text);
+            txtDouyuSignUrl.Text = SettingHelper.GetValue<string>(SettingHelper.DOUYU_SIGN_URL, SettingHelper.DOUYU_SIGN_URL_DEFAULT);
+            txtDouyuSignUrl.IsEnabled = swDouyuSignService.IsOn;
+            ApplyDouyuSignServiceSetting(txtDouyuSignUrl.Text, swDouyuSignService.IsOn);
+            _ = UpdateDouyuSignStatusAsync();
             txtDouyuSignUrl.Loaded += new RoutedEventHandler((sender, e) =>
             {
                 txtDouyuSignUrl.TextChanged += new TextChangedEventHandler((obj, args) =>
                 {
                     var value = txtDouyuSignUrl.Text?.Trim() ?? "";
                     SettingHelper.SetValue(SettingHelper.DOUYU_SIGN_URL, value);
-                    ApplyDouyuSignServiceSetting(value);
+                    ApplyDouyuSignServiceSetting(value, swDouyuSignService.IsOn);
                 });
             });
 
@@ -200,9 +212,75 @@ namespace AllLive.UWP.Views
            
         }
 
-        private static void ApplyDouyuSignServiceSetting(string value)
+        private static void ApplyDouyuSignServiceSetting(string value, bool enabled)
         {
-            CoreConfig.SetDouyuSignServiceUrl(value);
+            var url = string.IsNullOrWhiteSpace(value) ? SettingHelper.DOUYU_SIGN_URL_DEFAULT : value.Trim();
+            if (enabled)
+            {
+                CoreConfig.SetDouyuSignServiceUrl(url);
+            }
+            else
+            {
+                CoreConfig.SetDouyuSignServiceUrl(SettingHelper.DOUYU_SIGN_URL_PUBLIC);
+            }
+        }
+
+        private async void BtnDouyuSignCheck_Click(object sender, RoutedEventArgs e)
+        {
+            await UpdateDouyuSignStatusAsync(true);
+        }
+
+        private async Task UpdateDouyuSignStatusAsync(bool showToast = false)
+        {
+            if (!swDouyuSignService.IsOn)
+            {
+                txtDouyuSignStatus.Text = "已关闭";
+                return;
+            }
+
+            var url = string.IsNullOrWhiteSpace(txtDouyuSignUrl.Text)
+                ? SettingHelper.DOUYU_SIGN_URL_DEFAULT
+                : txtDouyuSignUrl.Text.Trim();
+            var healthUrl = BuildHealthUrl(url);
+            txtDouyuSignStatus.Text = "检测中...";
+
+            try
+            {
+                using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+                using var response = await client.GetAsync(healthUrl);
+                if (response.IsSuccessStatusCode)
+                {
+                    txtDouyuSignStatus.Text = "运行中";
+                    if (showToast)
+                    {
+                        Utils.ShowMessageToast("签名服务运行正常");
+                    }
+                    return;
+                }
+                txtDouyuSignStatus.Text = $"异常({(int)response.StatusCode})";
+            }
+            catch (Exception ex)
+            {
+                txtDouyuSignStatus.Text = "不可用";
+                if (showToast)
+                {
+                    Utils.ShowMessageToast($"签名服务不可用：{ex.Message}");
+                }
+            }
+        }
+
+        private static string BuildHealthUrl(string signUrl)
+        {
+            if (Uri.TryCreate(signUrl, UriKind.Absolute, out var uri))
+            {
+                var builder = new UriBuilder(uri)
+                {
+                    Path = "/health",
+                    Query = ""
+                };
+                return builder.Uri.ToString();
+            }
+            return signUrl.TrimEnd('/') + "/health";
         }
 
         protected override void OnNavigatedTo(NavigationEventArgs e)

@@ -57,6 +57,9 @@ namespace AllLive.UWP.Helper
         /// 斗鱼签名服务地址（可为空，使用默认）
         /// </summary>
         public const string DOUYU_SIGN_URL = "DouyuSignUrl";
+        public const string DOUYU_SIGN_URL_DEFAULT = "http://127.0.0.1:8788/api/douyu/sign";
+        public const string DOUYU_SIGN_URL_PUBLIC = "http://alive.nsapps.cn/api/AllLive/DouyuSign";
+        public const string DOUYU_SIGN_ENABLED = "DouyuSignEnabled";
 
         /// <summary>
         /// 音量

@@ -49,8 +49,16 @@ namespace AllLive.UWP
 
         private static void ApplyDouyuSignServiceSetting()
         {
-            var url = SettingHelper.GetValue<string>(SettingHelper.DOUYU_SIGN_URL, "");
-            CoreConfig.SetDouyuSignServiceUrl(url);
+            var enabled = SettingHelper.GetValue<bool>(SettingHelper.DOUYU_SIGN_ENABLED, true);
+            var url = SettingHelper.GetValue<string>(SettingHelper.DOUYU_SIGN_URL, SettingHelper.DOUYU_SIGN_URL_DEFAULT);
+            if (enabled)
+            {
+                CoreConfig.SetDouyuSignServiceUrl(url);
+            }
+            else
+            {
+                CoreConfig.SetDouyuSignServiceUrl(SettingHelper.DOUYU_SIGN_URL_PUBLIC);
+            }
         }
         private void RegisterExceptionHandlingSynchronizationContext()
         {
