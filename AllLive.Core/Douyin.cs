@@ -285,7 +285,7 @@ namespace AllLive.Core
             }
             catch (Exception ex)
             {
-                Debug.WriteLine(ex.Message);
+                CoreDebug.Log($"[Douyin] GetRoomDetailByWebRidApi失败 webRid={webRid} err={ex.GetType().FullName}: {ex.Message}");
             }
             return await GetRoomDetailByWebRidHtml(webRid);
         }
@@ -428,6 +428,7 @@ namespace AllLive.Core
         private async Task<JToken> GetRoomDataHtml(string webRid)
         {
             var dyCookie = await GetWebCookie(webRid);
+            CoreDebug.Log($"[Douyin] GetRoomDataHtml webRid={webRid} cookieLen={dyCookie?.Length ?? 0}");
             var resp = await HttpUtil.GetString($"https://live.douyin.com/{webRid}",
                 headers: new Dictionary<string, string>
                 {
@@ -437,11 +438,20 @@ namespace AllLive.Core
                     { "Cookie", dyCookie }
                 }
             );
+            CoreDebug.Log($"[Douyin] GetRoomDataHtml respLen={resp?.Length ?? 0} head={TrimForLog(resp)}");
+
+            var state = TryParseRenderData(resp);
+            if (state != null)
+            {
+                return state;
+            }
+
             Regex regex = new Regex("\\{\\\\\"state\\\\\":\\{\\\\\"appStore.*?\\]\\\\n", RegexOptions.Singleline);
-            Match match = regex.Match(resp);
+            Match match = regex.Match(resp ?? "");
             string json = match.Success ? match.Groups[0].Value : "";
             if (string.IsNullOrEmpty(json))
             {
+                CoreDebug.Log("[Douyin] GetRoomDataHtml解析失败: 未找到RENDER_DATA或state");
                 throw new Exception("无法读取直播间数据");
             }
             json = json.Trim().Replace("\\\"", "\"").Replace("\\\\", "\\").Replace("]\\n", "");
@@ -708,10 +718,64 @@ namespace AllLive.Core
             }
             catch (Exception ex)
             {
-                Debug.WriteLine(ex.Message);
+                CoreDebug.Log($"[Douyin] GetABogus失败 err={ex.GetType().FullName}: {ex.Message}");
                 return url;
             }
 
+        }
+
+        private static JToken TryParseRenderData(string html)
+        {
+            if (string.IsNullOrEmpty(html))
+            {
+                return null;
+            }
+            try
+            {
+                var match = Regex.Match(html,
+                    @"<script id=""RENDER_DATA"" type=""application\/json"">(.*?)<\/script>",
+                    RegexOptions.Singleline);
+                if (!match.Success)
+                {
+                    return null;
+                }
+                var renderData = match.Groups[1].Value ?? "";
+                if (string.IsNullOrEmpty(renderData))
+                {
+                    return null;
+                }
+                try
+                {
+                    renderData = Uri.UnescapeDataString(renderData);
+                }
+                catch
+                {
+                }
+                var json = JObject.Parse(renderData);
+                if (json["state"] != null)
+                {
+                    return json["state"];
+                }
+                return null;
+            }
+            catch (Exception ex)
+            {
+                CoreDebug.Log($"[Douyin] RENDER_DATA解析失败: {ex.GetType().FullName}: {ex.Message}");
+                return null;
+            }
+        }
+
+        private static string TrimForLog(string value, int maxLen = 200)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return "";
+            }
+            if (value.Length <= maxLen)
+            {
+                return value;
+            }
+            return value.Substring(0, maxLen);
         }
 
         private static string NormalizeCookie(string value)
