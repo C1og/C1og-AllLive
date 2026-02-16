@@ -13,6 +13,8 @@ app.Urls.Add("http://0.0.0.0:8788");
 
 const string DouyinVersionCode = "180800";
 const string DouyinSdkVersion = "1.0.14-beta.0";
+const int DouyinMaxRecursionDepth = 256;
+const int DouyinMaxStatements = 2_000_000;
 var douyinWebmssdkScript = new Lazy<string>(LoadDouyinWebmssdkScript);
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
@@ -167,10 +169,18 @@ static string BuildDouyinSignature(string script, string roomId, string uniqueId
         return "";
     }
     var md5 = Md5Hex(signParam);
-    var engine = new Engine();
+    var engine = CreateDouyinEngine();
     engine.Execute(script);
     var result = engine.Evaluate($"get_sign('{EscapeJs(md5)}')")?.ToString();
     return result ?? "";
+}
+
+static Engine CreateDouyinEngine()
+{
+    return new Engine(options => options
+        .LimitRecursion(DouyinMaxRecursionDepth)
+        .MaxStatements(DouyinMaxStatements)
+        .TimeoutInterval(TimeSpan.FromSeconds(3)));
 }
 
 static string BuildDouyinSignParam(string roomId, string uniqueId)

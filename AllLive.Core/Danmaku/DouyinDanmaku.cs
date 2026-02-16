@@ -451,7 +451,7 @@ namespace AllLive.Core.Danmaku
                     using (var client = new HttpClient())
                     {
                         client.Timeout = url.Contains("127.0.0.1") || url.Contains("localhost")
-                            ? TimeSpan.FromSeconds(2)
+                            ? TimeSpan.FromSeconds(5)
                             : TimeSpan.FromSeconds(10);
                         var start = DateTimeOffset.UtcNow;
                         using (var content = new StringContent(payload, Encoding.UTF8, "application/json"))
