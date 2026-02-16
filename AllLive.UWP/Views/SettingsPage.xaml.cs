@@ -32,6 +32,7 @@ namespace AllLive.UWP.Views
     public sealed partial class SettingsPage : Page
     {
         readonly SettingVM settingVM;
+        private bool _isUpdatingDouyinCookie;
         public SettingsPage()
         {
             settingVM = new SettingVM();
@@ -210,9 +211,22 @@ namespace AllLive.UWP.Views
             {
                 txtDouyinCookie.TextChanged += new TextChangedEventHandler((obj, args) =>
                 {
-                    var value = txtDouyinCookie.Text?.Trim() ?? "";
-                    SettingHelper.SetValue(SettingHelper.DOUYIN_COOKIE, value);
-                    ApplyDouyinCookieSetting(value);
+                    if (_isUpdatingDouyinCookie)
+                    {
+                        return;
+                    }
+                    var rawValue = txtDouyinCookie.Text ?? "";
+                    var normalized = NormalizeDouyinCookie(rawValue);
+                    SettingHelper.SetValue(SettingHelper.DOUYIN_COOKIE, normalized);
+                    ApplyDouyinCookieSetting(normalized);
+                    if (!string.IsNullOrWhiteSpace(rawValue) && !string.Equals(rawValue.Trim(), normalized, StringComparison.Ordinal))
+                    {
+                        _isUpdatingDouyinCookie = true;
+                        txtDouyinCookie.Text = normalized;
+                        txtDouyinCookie.SelectionStart = txtDouyinCookie.Text.Length;
+                        _isUpdatingDouyinCookie = false;
+                        Utils.ShowMessageToast("已自动裁剪，仅保存 ttwid/msToken/__ac_nonce");
+                    }
                 });
             });
 
@@ -242,6 +256,52 @@ namespace AllLive.UWP.Views
         private static void ApplyDouyinCookieSetting(string value)
         {
             CoreConfig.SetDouyinCookie(value);
+        }
+
+        private static string NormalizeDouyinCookie(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return "";
+            }
+            var cookie = value.Trim();
+            if (cookie.StartsWith("Cookie:", StringComparison.OrdinalIgnoreCase))
+            {
+                cookie = cookie.Substring("Cookie:".Length).Trim();
+            }
+            var keepKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "ttwid",
+                "msToken",
+                "__ac_nonce"
+            };
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var parts = cookie.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var part in parts)
+            {
+                var kv = part.Split(new[] { '=' }, 2);
+                var key = kv[0].Trim();
+                if (string.IsNullOrEmpty(key) || !keepKeys.Contains(key))
+                {
+                    continue;
+                }
+                var val = kv.Length > 1 ? kv[1].Trim() : "";
+                map[key] = val;
+            }
+            if (map.Count == 0)
+            {
+                return "";
+            }
+            var orderedKeys = new[] { "ttwid", "msToken", "__ac_nonce" };
+            var items = new List<string>();
+            foreach (var key in orderedKeys)
+            {
+                if (map.TryGetValue(key, out var val))
+                {
+                    items.Add($"{key}={val}");
+                }
+            }
+            return string.Join("; ", items);
         }
 
         private async void BtnDouyuSignCheck_Click(object sender, RoutedEventArgs e)
