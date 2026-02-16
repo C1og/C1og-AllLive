@@ -13,8 +13,6 @@ app.Urls.Add("http://0.0.0.0:8788");
 
 const string DouyinVersionCode = "180800";
 const string DouyinSdkVersion = "1.0.14-beta.0";
-const int DouyinMaxRecursionDepth = 256;
-const int DouyinMaxStatements = 2_000_000;
 var douyinWebmssdkScript = new Lazy<string>(LoadDouyinWebmssdkScript);
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
@@ -117,10 +115,10 @@ app.MapPost("/api/douyin/sign", async (HttpRequest request) =>
             return Results.Json(new { code = -1, msg = "webmssdk script empty" });
         }
 
-        var sign = BuildDouyinSignature(script, roomId, uniqueId);
+        var sign = BuildDouyinSignature(script, roomId, uniqueId, out var signError);
         if (string.IsNullOrWhiteSpace(sign))
         {
-            return Results.Json(new { code = -1, msg = "signature empty" });
+            return Results.Json(new { code = -1, msg = string.IsNullOrWhiteSpace(signError) ? "signature empty" : signError });
         }
         return Results.Json(new { code = 0, data = new { signature = sign }, msg = "" });
     }
@@ -161,26 +159,101 @@ app.MapPost("/api/douyin/abogus", async (HttpRequest request) =>
 
 app.Run();
 
-static string BuildDouyinSignature(string script, string roomId, string uniqueId)
+static string BuildDouyinSignature(string script, string roomId, string uniqueId, out string? error)
 {
+    error = null;
     var signParam = BuildDouyinSignParam(roomId, uniqueId);
     if (string.IsNullOrWhiteSpace(signParam))
     {
+        error = "sign param empty";
         return "";
     }
     var md5 = Md5Hex(signParam);
-    var engine = CreateDouyinEngine();
-    engine.Execute(script);
-    var result = engine.Evaluate($"get_sign('{EscapeJs(md5)}')")?.ToString();
-    return result ?? "";
+    var quickJsResult = TryGetSignByQuickJs(script, md5, out var quickJsError);
+    if (!string.IsNullOrWhiteSpace(quickJsResult))
+    {
+        return quickJsResult;
+    }
+    error = string.IsNullOrWhiteSpace(quickJsError) ? "quickjs sign empty" : quickJsError;
+    return "";
 }
 
-static Engine CreateDouyinEngine()
+static string? TryGetSignByQuickJs(string script, string md5Param, out string? error)
 {
-    return new Engine(options => options
-        .LimitRecursion(DouyinMaxRecursionDepth)
-        .MaxStatements(DouyinMaxStatements)
-        .TimeoutInterval(TimeSpan.FromSeconds(3)));
+    error = null;
+    object? runtime = null;
+    object? context = null;
+    try
+    {
+        var runtimeType = Type.GetType("QuickJS.QuickJSRuntime, QuickJS.NET");
+        if (runtimeType == null)
+        {
+            error = "QuickJSRuntime类型未找到";
+            return null;
+        }
+        runtime = Activator.CreateInstance(runtimeType);
+        var createContext = runtimeType.GetMethod("CreateContext", Type.EmptyTypes);
+        context = createContext?.Invoke(runtime, null);
+        if (context == null)
+        {
+            error = "CreateContext返回空";
+            return null;
+        }
+
+        var contextType = context.GetType();
+        var flagsType = Type.GetType("QuickJS.JSEvalFlags, QuickJS.NET");
+        object? flags = null;
+        var evalMethod = flagsType == null
+            ? null
+            : contextType.GetMethod("Eval", new[] { typeof(string), typeof(string), flagsType });
+        if (evalMethod == null)
+        {
+            evalMethod = contextType.GetMethod("Eval", new[] { typeof(string), typeof(string) });
+        }
+        if (evalMethod == null)
+        {
+            error = "Eval方法未找到";
+            return null;
+        }
+        if (flagsType != null && evalMethod.GetParameters().Length == 3)
+        {
+            flags = Enum.Parse(flagsType, "Global");
+        }
+
+        string Eval(string code)
+        {
+            if (evalMethod.GetParameters().Length == 3)
+            {
+                return evalMethod.Invoke(context, new object?[] { code, "", flags })?.ToString() ?? "";
+            }
+            return evalMethod.Invoke(context, new object?[] { code, "" })?.ToString() ?? "";
+        }
+
+        Eval(script);
+        var result = Eval($"get_sign('{EscapeJs(md5Param)}')");
+        if (string.IsNullOrWhiteSpace(result))
+        {
+            error = "get_sign返回空";
+            return null;
+        }
+        return result;
+    }
+    catch (Exception ex)
+    {
+        error = $"{ex.GetType().FullName}: {ex.Message}";
+        return null;
+    }
+    finally
+    {
+        if (context is IDisposable contextDisposable)
+        {
+            contextDisposable.Dispose();
+        }
+        if (runtime is IDisposable runtimeDisposable)
+        {
+            runtimeDisposable.Dispose();
+        }
+    }
 }
 
 static string BuildDouyinSignParam(string roomId, string uniqueId)
