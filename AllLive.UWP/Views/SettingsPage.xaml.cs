@@ -205,8 +205,7 @@ namespace AllLive.UWP.Views
             LiveDanmuSettingListWords.ItemsSource = settingVM.ShieldWords;
 
             // 抖音Cookie
-            txtDouyinCookie.Text = SettingHelper.GetValue<string>(SettingHelper.DOUYIN_COOKIE, "");
-            ApplyDouyinCookieSetting(txtDouyinCookie.Text);
+            _ = LoadDouyinCookieAsync();
             txtDouyinCookie.Loaded += new RoutedEventHandler((sender, e) =>
             {
                 txtDouyinCookie.TextChanged += new TextChangedEventHandler((obj, args) =>
@@ -216,16 +215,17 @@ namespace AllLive.UWP.Views
                         return;
                     }
                     var rawValue = txtDouyinCookie.Text ?? "";
-                    var normalized = NormalizeDouyinCookie(rawValue);
-                    SettingHelper.SetValue(SettingHelper.DOUYIN_COOKIE, normalized);
+                    var normalized = NormalizeDouyinCookieInput(rawValue);
+                    var trimmed = TrimDouyinCookieForSettings(normalized);
+                    SettingHelper.SetValue(SettingHelper.DOUYIN_COOKIE, trimmed);
                     ApplyDouyinCookieSetting(normalized);
-                    if (!string.IsNullOrWhiteSpace(rawValue) && !string.Equals(rawValue.Trim(), normalized, StringComparison.Ordinal))
+                    _ = DouyinCookieStore.SaveAsync(normalized);
+                    if (!string.Equals(rawValue, normalized, StringComparison.Ordinal))
                     {
                         _isUpdatingDouyinCookie = true;
                         txtDouyinCookie.Text = normalized;
                         txtDouyinCookie.SelectionStart = txtDouyinCookie.Text.Length;
                         _isUpdatingDouyinCookie = false;
-                        Utils.ShowMessageToast("已自动裁剪，仅保存 ttwid/msToken/__ac_nonce");
                     }
                 });
             });
@@ -258,7 +258,21 @@ namespace AllLive.UWP.Views
             CoreConfig.SetDouyinCookie(value);
         }
 
-        private static string NormalizeDouyinCookie(string value)
+        private async Task LoadDouyinCookieAsync()
+        {
+            var cookie = await DouyinCookieStore.LoadAsync();
+            if (string.IsNullOrWhiteSpace(cookie))
+            {
+                cookie = SettingHelper.GetValue<string>(SettingHelper.DOUYIN_COOKIE, "");
+            }
+            _isUpdatingDouyinCookie = true;
+            txtDouyinCookie.Text = cookie ?? "";
+            txtDouyinCookie.SelectionStart = txtDouyinCookie.Text.Length;
+            _isUpdatingDouyinCookie = false;
+            ApplyDouyinCookieSetting(cookie ?? "");
+        }
+
+        private static string NormalizeDouyinCookieInput(string value)
         {
             if (string.IsNullOrWhiteSpace(value))
             {
@@ -269,14 +283,24 @@ namespace AllLive.UWP.Views
             {
                 cookie = cookie.Substring("Cookie:".Length).Trim();
             }
+            return cookie;
+        }
+
+        private static string TrimDouyinCookieForSettings(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return "";
+            }
             var keepKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
                 "ttwid",
                 "msToken",
-                "__ac_nonce"
+                "__ac_nonce",
+                "s_v_web_id"
             };
             var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            var parts = cookie.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
+            var parts = value.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
             foreach (var part in parts)
             {
                 var kv = part.Split(new[] { '=' }, 2);
@@ -292,7 +316,7 @@ namespace AllLive.UWP.Views
             {
                 return "";
             }
-            var orderedKeys = new[] { "ttwid", "msToken", "__ac_nonce" };
+            var orderedKeys = new[] { "ttwid", "msToken", "__ac_nonce", "s_v_web_id" };
             var items = new List<string>();
             foreach (var key in orderedKeys)
             {

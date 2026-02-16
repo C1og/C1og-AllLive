@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices.WindowsRuntime;
+using System.Threading.Tasks;
 using Windows.ApplicationModel;
 using Windows.ApplicationModel.Activation;
 using Windows.ApplicationModel.Core;
@@ -37,7 +38,6 @@ namespace AllLive.UWP
 
             this.InitializeComponent();
             ApplyDouyuSignServiceSetting();
-            ApplyDouyinCookieSetting();
             AllLive.Core.Helper.CoreDebug.Logger = message => LogHelper.Log(message, LogType.DEBUG);
             if (Utils.IsXbox && SettingHelper.GetValue<int>(SettingHelper.XBOX_MODE, 0) == 0)
             {
@@ -62,9 +62,13 @@ namespace AllLive.UWP
             }
         }
 
-        private static void ApplyDouyinCookieSetting()
+        private static async Task ApplyDouyinCookieSettingAsync()
         {
-            var cookie = SettingHelper.GetValue<string>(SettingHelper.DOUYIN_COOKIE, "");
+            var cookie = await DouyinCookieStore.LoadAsync();
+            if (string.IsNullOrWhiteSpace(cookie))
+            {
+                cookie = SettingHelper.GetValue<string>(SettingHelper.DOUYIN_COOKIE, "");
+            }
             CoreConfig.SetDouyinCookie(cookie);
         }
         private void RegisterExceptionHandlingSynchronizationContext()
@@ -109,6 +113,7 @@ namespace AllLive.UWP
         {
             //初始化数据库
             await DatabaseHelper.InitializeDatabase();
+            await ApplyDouyinCookieSettingAsync();
             //初始化弹幕DPI
             NSDanmaku.Controls.Danmaku.InitDanmakuDpi();
             if (Utils.IsXbox)
