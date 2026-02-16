@@ -8,6 +8,7 @@ namespace AllLive.Core.Helper
     {
         private static readonly object _lock = new object();
         private static List<string> _douyuSignServiceUrls = new List<string>();
+        private static string _douyinCookie = "";
 
         public static IReadOnlyList<string> GetDouyuSignServiceUrls()
         {
@@ -41,6 +42,23 @@ namespace AllLive.Core.Helper
                 .Split(new[] { ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
                 .Select(x => x.Trim());
             SetDouyuSignServiceUrls(urls);
+        }
+
+        public static string GetDouyinCookie()
+        {
+            lock (_lock)
+            {
+                return _douyinCookie ?? "";
+            }
+        }
+
+        public static void SetDouyinCookie(string value)
+        {
+            var cookie = value?.Trim() ?? "";
+            lock (_lock)
+            {
+                _douyinCookie = cookie;
+            }
         }
     }
 }

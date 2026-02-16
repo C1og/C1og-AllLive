@@ -37,6 +37,7 @@ namespace AllLive.UWP
 
             this.InitializeComponent();
             ApplyDouyuSignServiceSetting();
+            ApplyDouyinCookieSetting();
             AllLive.Core.Helper.CoreDebug.Logger = message => LogHelper.Log(message, LogType.DEBUG);
             if (Utils.IsXbox && SettingHelper.GetValue<int>(SettingHelper.XBOX_MODE, 0) == 0)
             {
@@ -59,6 +60,12 @@ namespace AllLive.UWP
             {
                 CoreConfig.SetDouyuSignServiceUrl(SettingHelper.DOUYU_SIGN_URL_PUBLIC);
             }
+        }
+
+        private static void ApplyDouyinCookieSetting()
+        {
+            var cookie = SettingHelper.GetValue<string>(SettingHelper.DOUYIN_COOKIE, "");
+            CoreConfig.SetDouyinCookie(cookie);
         }
         private void RegisterExceptionHandlingSynchronizationContext()
         {

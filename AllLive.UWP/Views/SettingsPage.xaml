@@ -186,7 +186,7 @@
                         CornerRadius="4">
                         <StackPanel VerticalAlignment="Center">
                             <TextBlock>签名服务状态</TextBlock>
-                            <TextBlock FontSize="12" Foreground="Gray">检测本地服务 /health</TextBlock>
+                            <TextBlock FontSize="12" Foreground="Gray">检测本地服务 /health 启动：dotnet run --project AllLive.SignService</TextBlock>
                         </StackPanel>
                         <StackPanel
                             HorizontalAlignment="Right"
@@ -241,6 +241,25 @@
                             Visibility="Collapsed">
                             注销登录
                         </Button>
+                    </Grid>
+                    <Grid
+                        Margin="0,8,0,0"
+                        Padding="8,12"
+                        Background="{ThemeResource LayerFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="4">
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock>抖音Cookie</TextBlock>
+                            <TextBlock FontSize="12" Foreground="Gray">需包含 ttwid / msToken，可从浏览器复制</TextBlock>
+                        </StackPanel>
+                        <TextBox
+                            x:Name="txtDouyinCookie"
+                            Width="360"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center"
+                            PlaceholderText="填写 Cookie"
+                            TextWrapping="Wrap" />
                     </Grid>
                     <TextBlock Margin="4,12" FontSize="18">互动</TextBlock>
                     <Grid

@@ -81,6 +81,11 @@ namespace AllLive.UWP.Helper
         public const string BILI_USER_ID = "BiliUserId";
 
         /// <summary>
+        /// 抖音Cookie
+        /// </summary>
+        public const string DOUYIN_COOKIE = "DouyinCookie";
+
+        /// <summary>
         /// NavigationView导航栏显示模式
         /// </summary>
         public const string PANE_DISPLAY_MODE = "PaneDisplayMode";

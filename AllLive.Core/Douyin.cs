@@ -36,6 +36,12 @@ namespace AllLive.Core
 
         private async Task<Dictionary<string, string>> GetRequestHeaders()
         {
+            var manualCookie = CoreConfig.GetDouyinCookie();
+            if (!string.IsNullOrWhiteSpace(manualCookie))
+            {
+                headers["Cookie"] = NormalizeCookie(manualCookie);
+                return headers;
+            }
             if (headers.ContainsKey("Cookie") || headers.ContainsKey("cookie"))
             {
                 return headers;
@@ -43,17 +49,25 @@ namespace AllLive.Core
             try
             {
                 var resp = await HttpUtil.Head("https://live.douyin.com", headers);
-                foreach (var item in resp.Headers.GetValues("Set-Cookie"))
+                if (resp.Headers.TryGetValues("Set-Cookie", out var values))
                 {
-                    if (item.Contains("ttwid"))
+                    foreach (var item in values)
                     {
-                        headers.Add("Cookie", item.Split(';')[0]);
+                        if (item.Contains("ttwid"))
+                        {
+                            headers["Cookie"] = item.Split(';')[0];
+                            break;
+                        }
                     }
                 }
             }
             catch (Exception ex)
             {
                 Console.WriteLine(ex.Message);
+            }
+            if (!headers.ContainsKey("Cookie"))
+            {
+                headers["Cookie"] = "";
             }
             return headers;
         }
@@ -398,16 +412,24 @@ namespace AllLive.Core
         /// <returns></returns>
         private async Task<string> GetWebCookie(string webRid)
         {
+            var manualCookie = CoreConfig.GetDouyinCookie();
+            if (!string.IsNullOrWhiteSpace(manualCookie))
+            {
+                return NormalizeCookie(manualCookie);
+            }
             var resp = await HttpUtil.Head($"https://live.douyin.com/{webRid}",
                 headers: await GetRequestHeaders()
             );
             var dyCookie = "";
-            foreach (var item in resp.Headers.GetValues("Set-Cookie"))
+            if (resp.Headers.TryGetValues("Set-Cookie", out var values))
             {
-                var cookie = item.Split(';')[0];
-                if (cookie.Contains("ttwid") || cookie.Contains("__ac_nonce") || cookie.Contains("msToken"))
+                foreach (var item in values)
                 {
-                    dyCookie += $"{cookie};";
+                    var cookie = item.Split(';')[0];
+                    if (cookie.Contains("ttwid") || cookie.Contains("__ac_nonce") || cookie.Contains("msToken"))
+                    {
+                        dyCookie += $"{cookie};";
+                    }
                 }
             }
             return dyCookie;
@@ -712,6 +734,20 @@ namespace AllLive.Core
                 return url;
             }
 
+        }
+
+        private static string NormalizeCookie(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return "";
+            }
+            var cookie = value.Trim();
+            if (cookie.StartsWith("Cookie:", StringComparison.OrdinalIgnoreCase))
+            {
+                cookie = cookie.Substring("Cookie:".Length).Trim();
+            }
+            return cookie;
         }
     }
 }

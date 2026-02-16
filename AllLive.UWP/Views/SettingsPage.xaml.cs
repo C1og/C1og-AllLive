@@ -203,6 +203,19 @@ namespace AllLive.UWP.Views
             //弹幕关键词
             LiveDanmuSettingListWords.ItemsSource = settingVM.ShieldWords;
 
+            // 抖音Cookie
+            txtDouyinCookie.Text = SettingHelper.GetValue<string>(SettingHelper.DOUYIN_COOKIE, "");
+            ApplyDouyinCookieSetting(txtDouyinCookie.Text);
+            txtDouyinCookie.Loaded += new RoutedEventHandler((sender, e) =>
+            {
+                txtDouyinCookie.TextChanged += new TextChangedEventHandler((obj, args) =>
+                {
+                    var value = txtDouyinCookie.Text?.Trim() ?? "";
+                    SettingHelper.SetValue(SettingHelper.DOUYIN_COOKIE, value);
+                    ApplyDouyinCookieSetting(value);
+                });
+            });
+
 
             if(BiliAccount.Instance.Logined)
             {
@@ -224,6 +237,11 @@ namespace AllLive.UWP.Views
             {
                 CoreConfig.SetDouyuSignServiceUrl(SettingHelper.DOUYU_SIGN_URL_PUBLIC);
             }
+        }
+
+        private static void ApplyDouyinCookieSetting(string value)
+        {
+            CoreConfig.SetDouyinCookie(value);
         }
 
         private async void BtnDouyuSignCheck_Click(object sender, RoutedEventArgs e)
