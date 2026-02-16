@@ -297,14 +297,11 @@ namespace AllLive.SignService
     {
         public static string GenerateFingerprint(string browserType = "Edge")
         {
-            return browserType switch
-            {
-                "Safari" => GenerateFingerprint("MacIntel"),
-                _ => GenerateFingerprint("Win32")
-            };
+            var platform = browserType == "Safari" ? "MacIntel" : "Win32";
+            return GenerateByPlatform(platform);
         }
 
-        private static string GenerateFingerprint(string platform)
+        private static string GenerateByPlatform(string platform)
         {
             var random = Random.Shared;
             var innerWidth = 1024 + random.Next(1920 - 1024 + 1);
@@ -346,7 +343,7 @@ namespace AllLive.SignService
             44,45,46,47,48,49,50,24,25,52,53,54,55,57,58,59,60,65,66,70,71
         };
 
-        public Abogus(string userAgent, string browserFp = null, int[] options = null)
+        public Abogus(string userAgent, string? browserFp = null, int[]? options = null)
         {
             _userAgent = string.IsNullOrWhiteSpace(userAgent) ? DefaultUserAgent : userAgent;
             _browserFp = string.IsNullOrWhiteSpace(browserFp) ? BrowserFingerprintGenerator.GenerateFingerprint() : browserFp;
