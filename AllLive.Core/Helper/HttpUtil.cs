@@ -9,7 +9,7 @@ namespace AllLive.Core.Helper
 {
     public static class HttpUtil
     {
-        public static async Task<string> GetString(string url, IDictionary<string, string> headers = null, IDictionary<string, string> queryParameters = null)
+        public static async Task<string> GetString(string url, IDictionary<string, string> headers = null, IDictionary<string, string> queryParameters = null, bool ensureSuccess = true)
         {
             HttpClientHandler httpClientHandler = new HttpClientHandler
             {
@@ -34,11 +34,14 @@ namespace AllLive.Core.Helper
                     url = url.TrimEnd('&');
                 }
                 var result = await httpClient.GetAsync(url);
-                result.EnsureSuccessStatusCode();
+                if (ensureSuccess)
+                {
+                    result.EnsureSuccessStatusCode();
+                }
                 return await result.Content.ReadAsStringAsync();
             }
         }
-        public static async Task<HttpResponseMessage> Get(string url, IDictionary<string, string> headers = null, IDictionary<string, string> queryParameters = null)
+        public static async Task<HttpResponseMessage> Get(string url, IDictionary<string, string> headers = null, IDictionary<string, string> queryParameters = null, bool ensureSuccess = true)
         {
             HttpClientHandler httpClientHandler = new HttpClientHandler
             {
@@ -63,7 +66,10 @@ namespace AllLive.Core.Helper
                     url = url.TrimEnd('&');
                 }
                 var result = await httpClient.GetAsync(url);
-                result.EnsureSuccessStatusCode();
+                if (ensureSuccess)
+                {
+                    result.EnsureSuccessStatusCode();
+                }
                 return result;
             }
         }

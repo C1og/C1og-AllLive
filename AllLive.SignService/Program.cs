@@ -81,6 +81,35 @@ app.MapPost("/api/douyu/sign", async (HttpRequest request) =>
     }
 });
 
+app.MapPost("/api/douyin/abogus", async (HttpRequest request) =>
+{
+    AbogusRequest? payload;
+    try
+    {
+        payload = await request.ReadFromJsonAsync<AbogusRequest>();
+    }
+    catch
+    {
+        return Results.Json(new { code = -1, msg = "invalid json" });
+    }
+
+    var url = payload?.url ?? string.Empty;
+    if (string.IsNullOrWhiteSpace(url))
+    {
+        return Results.Json(new { code = -1, msg = "url empty" });
+    }
+
+    try
+    {
+        var signedUrl = DouyinAbogus.BuildSignedUrl(url, payload?.userAgent ?? "", payload?.body ?? "");
+        return Results.Json(new { code = 0, data = new { url = signedUrl }, msg = "" });
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new { code = -1, msg = ex.Message });
+    }
+});
+
 app.Run();
 
 static string ExtractSignJs(string html)
@@ -117,3 +146,4 @@ static string EscapeJs(string value)
 }
 
 record SignRequest(string html, string rid);
+record AbogusRequest(string url, string? userAgent, string? body);

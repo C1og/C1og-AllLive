@@ -24,6 +24,8 @@ namespace AllLive.Core
         public ILiveDanmaku GetDanmaku() => new DouyinDanmaku();
 
         private const string USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0";
+        private const string ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7";
+        private const string ACCEPT_LANGUAGE = "zh-CN,zh;q=0.9,en;q=0.8";
         private const string REFERER = "https://live.douyin.com";
         private const string AUTHORITY = "live.douyin.com";
 
@@ -31,7 +33,9 @@ namespace AllLive.Core
         {
             { "User-Agent", USER_AGENT },
             { "Referer", REFERER },
-            { "Authority", AUTHORITY }
+            { "Authority", AUTHORITY },
+            { "Accept", ACCEPT },
+            { "Accept-Language", ACCEPT_LANGUAGE }
         };
 
         private async Task<Dictionary<string, string>> GetRequestHeaders()
@@ -429,16 +433,25 @@ namespace AllLive.Core
         {
             var dyCookie = await GetWebCookie(webRid);
             CoreDebug.Log($"[Douyin] GetRoomDataHtml webRid={webRid} cookieLen={dyCookie?.Length ?? 0}");
-            var resp = await HttpUtil.GetString($"https://live.douyin.com/{webRid}",
+            var response = await HttpUtil.Get($"https://live.douyin.com/{webRid}",
                 headers: new Dictionary<string, string>
                 {
                     { "User-Agent", USER_AGENT },
                     { "Referer", REFERER },
                     { "Authority", AUTHORITY },
+                    { "Accept", ACCEPT },
+                    { "Accept-Language", ACCEPT_LANGUAGE },
                     { "Cookie", dyCookie }
-                }
+                },
+                ensureSuccess: false
             );
-            CoreDebug.Log($"[Douyin] GetRoomDataHtml respLen={resp?.Length ?? 0} head={TrimForLog(resp)}");
+            var resp = await response.Content.ReadAsStringAsync();
+            var statusCode = (int)response.StatusCode;
+            CoreDebug.Log($"[Douyin] GetRoomDataHtml status={statusCode} respLen={resp?.Length ?? 0} head={TrimForLog(resp)}");
+            if (!response.IsSuccessStatusCode && statusCode == 444)
+            {
+                CoreDebug.Log("[Douyin] GetRoomDataHtml触发风控(444)");
+            }
 
             var state = TryParseRenderData(resp);
             if (state != null)
@@ -704,24 +717,37 @@ namespace AllLive.Core
 
         private async Task<string> GetABougs(string url)
         {
-            try
+            var services = new[]
             {
-                var resp = await HttpUtil.PostJsonString("https://dy.nsapps.cn/abogus",
-                   JsonConvert.SerializeObject(new
-                   {
-                       url,
-                       userAgent = USER_AGENT
-                   }
-               ));
-                var obj = JObject.Parse(resp);
-                return obj["data"]["url"].ToString();
-            }
-            catch (Exception ex)
+                "http://127.0.0.1:8788/api/douyin/abogus",
+                "https://dy.nsapps.cn/abogus"
+            };
+            foreach (var service in services)
             {
-                CoreDebug.Log($"[Douyin] GetABogus失败 err={ex.GetType().FullName}: {ex.Message}");
-                return url;
+                try
+                {
+                    var resp = await HttpUtil.PostJsonString(service,
+                       JsonConvert.SerializeObject(new
+                       {
+                           url,
+                           userAgent = USER_AGENT
+                       }
+                   ));
+                    var obj = JObject.Parse(resp);
+                    var signedUrl = obj["data"]?["url"]?.ToString();
+                    if (!string.IsNullOrWhiteSpace(signedUrl))
+                    {
+                        CoreDebug.Log($"[Douyin] GetABogus success url={service}");
+                        return signedUrl;
+                    }
+                    CoreDebug.Log($"[Douyin] GetABogus无效响应 url={service} respLen={resp?.Length ?? 0}");
+                }
+                catch (Exception ex)
+                {
+                    CoreDebug.Log($"[Douyin] GetABogus失败 url={service} err={ex.GetType().FullName}: {ex.Message}");
+                }
             }
-
+            return url;
         }
 
         private static JToken TryParseRenderData(string html)
