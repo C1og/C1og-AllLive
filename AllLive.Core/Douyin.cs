@@ -39,36 +39,14 @@ namespace AllLive.Core
             var manualCookie = CoreConfig.GetDouyinCookie();
             if (!string.IsNullOrWhiteSpace(manualCookie))
             {
-                headers["Cookie"] = NormalizeCookie(manualCookie);
+                headers["Cookie"] = await ResolveCookieAsync();
                 return headers;
             }
             if (headers.ContainsKey("Cookie") || headers.ContainsKey("cookie"))
             {
                 return headers;
             }
-            try
-            {
-                var resp = await HttpUtil.Head("https://live.douyin.com", headers);
-                if (resp.Headers.TryGetValues("Set-Cookie", out var values))
-                {
-                    foreach (var item in values)
-                    {
-                        if (item.Contains("ttwid"))
-                        {
-                            headers["Cookie"] = item.Split(';')[0];
-                            break;
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine(ex.Message);
-            }
-            if (!headers.ContainsKey("Cookie"))
-            {
-                headers["Cookie"] = "";
-            }
+            headers["Cookie"] = await ResolveCookieAsync();
             return headers;
         }
 
@@ -415,7 +393,7 @@ namespace AllLive.Core
             var manualCookie = CoreConfig.GetDouyinCookie();
             if (!string.IsNullOrWhiteSpace(manualCookie))
             {
-                return NormalizeCookie(manualCookie);
+                return await ResolveCookieAsync(webRid);
             }
             var resp = await HttpUtil.Head($"https://live.douyin.com/{webRid}",
                 headers: await GetRequestHeaders()
@@ -748,6 +726,110 @@ namespace AllLive.Core
                 cookie = cookie.Substring("Cookie:".Length).Trim();
             }
             return cookie;
+        }
+
+        private async Task<string> ResolveCookieAsync(string webRid = null)
+        {
+            var cookieMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var manualCookie = CoreConfig.GetDouyinCookie();
+            if (!string.IsNullOrWhiteSpace(manualCookie))
+            {
+                cookieMap = ParseCookie(NormalizeCookie(manualCookie));
+            }
+
+            if (!cookieMap.ContainsKey("ttwid"))
+            {
+                MergeCookiesFromResponse(cookieMap, await TryHeadAsync("https://live.douyin.com"));
+            }
+
+            if (!cookieMap.ContainsKey("msToken") || !cookieMap.ContainsKey("__ac_nonce"))
+            {
+                var url = string.IsNullOrWhiteSpace(webRid)
+                    ? "https://live.douyin.com"
+                    : $"https://live.douyin.com/{webRid}";
+                MergeCookiesFromResponse(cookieMap, await TryHeadAsync(url));
+            }
+
+            return BuildCookie(cookieMap);
+        }
+
+        private async Task<HttpResponseMessage> TryHeadAsync(string url)
+        {
+            try
+            {
+                return await HttpUtil.Head(url, headers);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.Message);
+                return null;
+            }
+        }
+
+        private static void MergeCookiesFromResponse(Dictionary<string, string> cookieMap, HttpResponseMessage resp)
+        {
+            if (resp == null)
+            {
+                return;
+            }
+            if (resp.Headers.TryGetValues("Set-Cookie", out var values))
+            {
+                foreach (var item in values)
+                {
+                    var pair = item.Split(';')[0];
+                    MergeCookiePair(cookieMap, pair);
+                }
+            }
+        }
+
+        private static Dictionary<string, string> ParseCookie(string cookie)
+        {
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrWhiteSpace(cookie))
+            {
+                return map;
+            }
+            var parts = cookie.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var part in parts)
+            {
+                var kv = part.Split(new[] { '=' }, 2);
+                var key = kv[0].Trim();
+                if (string.IsNullOrEmpty(key))
+                {
+                    continue;
+                }
+                var value = kv.Length > 1 ? kv[1].Trim() : "";
+                map[key] = value;
+            }
+            return map;
+        }
+
+        private static void MergeCookiePair(Dictionary<string, string> map, string pair)
+        {
+            if (string.IsNullOrWhiteSpace(pair))
+            {
+                return;
+            }
+            var kv = pair.Split(new[] { '=' }, 2);
+            var key = kv[0].Trim();
+            if (string.IsNullOrEmpty(key))
+            {
+                return;
+            }
+            var value = kv.Length > 1 ? kv[1].Trim() : "";
+            if (!map.ContainsKey(key))
+            {
+                map[key] = value;
+            }
+        }
+
+        private static string BuildCookie(Dictionary<string, string> map)
+        {
+            if (map == null || map.Count == 0)
+            {
+                return "";
+            }
+            return string.Join("; ", map.Select(kv => $"{kv.Key}={kv.Value}"));
         }
     }
 }
