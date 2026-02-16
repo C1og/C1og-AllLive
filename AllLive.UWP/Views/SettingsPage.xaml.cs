@@ -247,18 +247,20 @@ namespace AllLive.UWP.Views
 
             try
             {
-                using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
-                using var response = await client.GetAsync(healthUrl);
-                if (response.IsSuccessStatusCode)
+                using (var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) })
+                using (var response = await client.GetAsync(healthUrl))
                 {
-                    txtDouyuSignStatus.Text = "运行中";
-                    if (showToast)
+                    if (response.IsSuccessStatusCode)
                     {
-                        Utils.ShowMessageToast("签名服务运行正常");
+                        txtDouyuSignStatus.Text = "运行中";
+                        if (showToast)
+                        {
+                            Utils.ShowMessageToast("签名服务运行正常");
+                        }
+                        return;
                     }
-                    return;
+                    txtDouyuSignStatus.Text = $"异常({(int)response.StatusCode})";
                 }
-                txtDouyuSignStatus.Text = $"异常({(int)response.StatusCode})";
             }
             catch (Exception ex)
             {
