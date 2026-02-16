@@ -715,39 +715,27 @@ namespace AllLive.Core
             return sb.ToString();
         }
 
-        private async Task<string> GetABougs(string url)
+        private Task<string> GetABougs(string url)
         {
-            var services = new[]
+            if (string.IsNullOrWhiteSpace(url))
             {
-                "http://127.0.0.1:8788/api/douyin/abogus",
-                "https://dy.nsapps.cn/abogus"
-            };
-            foreach (var service in services)
-            {
-                try
-                {
-                    var resp = await HttpUtil.PostJsonString(service,
-                       JsonConvert.SerializeObject(new
-                       {
-                           url,
-                           userAgent = USER_AGENT
-                       }
-                   ));
-                    var obj = JObject.Parse(resp);
-                    var signedUrl = obj["data"]?["url"]?.ToString();
-                    if (!string.IsNullOrWhiteSpace(signedUrl))
-                    {
-                        CoreDebug.Log($"[Douyin] GetABogus success url={service}");
-                        return signedUrl;
-                    }
-                    CoreDebug.Log($"[Douyin] GetABogus无效响应 url={service} respLen={resp?.Length ?? 0}");
-                }
-                catch (Exception ex)
-                {
-                    CoreDebug.Log($"[Douyin] GetABogus失败 url={service} err={ex.GetType().FullName}: {ex.Message}");
-                }
+                return Task.FromResult(url);
             }
-            return url;
+            try
+            {
+                var signedUrl = DouyinAbogus.BuildSignedUrl(url, USER_AGENT);
+                if (!string.IsNullOrWhiteSpace(signedUrl))
+                {
+                    CoreDebug.Log($"[Douyin] GetABogus local success len={signedUrl.Length}");
+                    return Task.FromResult(signedUrl);
+                }
+                CoreDebug.Log("[Douyin] GetABogus local empty");
+            }
+            catch (Exception ex)
+            {
+                CoreDebug.Log($"[Douyin] GetABogus local failed err={ex.GetType().FullName}: {ex.Message}");
+            }
+            return Task.FromResult(url);
         }
 
         private static JToken TryParseRenderData(string html)

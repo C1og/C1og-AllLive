@@ -32,6 +32,7 @@ namespace AllLive.Core.Danmaku
         public event EventHandler<LiveMessage> NewMessage;
         public event EventHandler<string> OnClose;
         private string baseUrl = "wss://webcast3-ws-web-lq.douyin.com/webcast/im/push/v2/";
+        private const string UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0";
 
         Timer timer;
         WebSocket ws;
@@ -79,7 +80,14 @@ namespace AllLive.Core.Danmaku
         };
 
             var sign = await GetSign(danmakuArgs.RoomId, danmakuArgs.UserId);
-            query.Add("signature", sign);
+            if (!string.IsNullOrWhiteSpace(sign))
+            {
+                query.Add("signature", sign);
+            }
+            else
+            {
+                CoreDebug.Log("[DouyinDanmaku] signature为空，将尝试无签名连接");
+            }
 
             // 将参数拼接到url
             var url = $"{baseUrl}?{Utils.BuildQueryString(query)}";
@@ -89,9 +97,10 @@ namespace AllLive.Core.Danmaku
             // 添加请求头
             ws.CustomHeaders = new Dictionary<string, string>() {
                 {"Origin","https://live.douyin.com" },
-                {"Cookie", danmakuArgs.Cookie},
-                {"User-Agnet","Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0" }
+                {"Cookie", danmakuArgs.Cookie ?? "" },
+                {"User-Agent",UserAgent }
               };
+            CoreDebug.Log($"[DouyinDanmaku] 连接WS roomId={danmakuArgs.RoomId} userId={danmakuArgs.UserId} signLen={sign?.Length ?? 0} cookieLen={danmakuArgs.Cookie?.Length ?? 0} urlLen={url.Length}");
             // 必须设置ssl协议为Tls12
             ws.SslConfiguration.EnabledSslProtocols = System.Security.Authentication.SslProtocols.Tls12;
 
@@ -108,6 +117,7 @@ namespace AllLive.Core.Danmaku
         }
         private async void Ws_OnOpen(object sender, EventArgs e)
         {
+            CoreDebug.Log("[DouyinDanmaku] WebSocket已连接");
             await Task.Run(() =>
             {
                 //发送进房信息
@@ -150,7 +160,7 @@ namespace AllLive.Core.Danmaku
             }
             catch (Exception ex)
             {
-                Debug.WriteLine(ex.Message);
+                CoreDebug.Log($"[DouyinDanmaku] 消息解析异常: {ex.GetType().FullName}: {ex.Message}");
             }
         }
         private void UnPackWebcastChatMessage(byte[] payload)
@@ -168,7 +178,7 @@ namespace AllLive.Core.Danmaku
             }
             catch (Exception ex)
             {
-                Debug.WriteLine(ex.Message);
+                CoreDebug.Log($"[DouyinDanmaku] 弹幕解包失败: {ex.GetType().FullName}: {ex.Message}");
             }
         }
 
@@ -189,17 +199,19 @@ namespace AllLive.Core.Danmaku
             }
             catch (Exception ex)
             {
-                Debug.WriteLine(ex.Message);
+                CoreDebug.Log($"[DouyinDanmaku] 在线人数解包失败: {ex.GetType().FullName}: {ex.Message}");
             }
 
         }
         private void Ws_OnClose(object sender, CloseEventArgs e)
         {
+            CoreDebug.Log($"[DouyinDanmaku] WebSocket关闭 code={e.Code} clean={e.WasClean} reason={e.Reason}");
             OnClose?.Invoke(this, e.Reason);
         }
 
         private void Ws_OnError(object sender, WebSocketSharp.ErrorEventArgs e)
         {
+            CoreDebug.Log($"[DouyinDanmaku] WebSocket错误: {e.Message}{(e.Exception == null ? "" : $" | {e.Exception.GetType().FullName}: {e.Exception.Message}")}");
             OnClose?.Invoke(this, e.Message);
         }
 
@@ -300,16 +312,21 @@ namespace AllLive.Core.Danmaku
         {
             try
             {
-                var body=JsonConvert.SerializeObject(new { roomId, uniqueId });
+                var body = JsonConvert.SerializeObject(new { roomId, uniqueId });
                 var result = await HttpUtil.PostJsonString("https://dy.nsapps.cn/signature", body);
                 var json = JObject.Parse(result);
-                return json["data"]["signature"].ToString();
+                var sign = json["data"]?["signature"]?.ToString();
+                if (string.IsNullOrWhiteSpace(sign))
+                {
+                    CoreDebug.Log($"[DouyinDanmaku] signature接口返回空 roomId={roomId}");
+                    return "";
+                }
+                return sign;
             }
             catch (Exception ex)
             {
-                Debug.WriteLine(ex);
-
-                return "00000000";
+                CoreDebug.Log($"[DouyinDanmaku] signature获取失败 roomId={roomId} err={ex.GetType().FullName}: {ex.Message}");
+                return "";
             }
         }
     }
