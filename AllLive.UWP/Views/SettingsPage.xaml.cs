@@ -158,6 +158,29 @@ namespace AllLive.UWP.Views
                 });
             });
 
+            swDouyinSignService.IsOn = SettingHelper.GetValue<bool>(SettingHelper.DOUYIN_SIGN_ENABLED, true);
+            swDouyinSignService.Toggled += new RoutedEventHandler((obj, args) =>
+            {
+                SettingHelper.SetValue(SettingHelper.DOUYIN_SIGN_ENABLED, swDouyinSignService.IsOn);
+                txtDouyinSignUrl.IsEnabled = swDouyinSignService.IsOn;
+                ApplyDouyinSignServiceSetting(txtDouyinSignUrl.Text, swDouyinSignService.IsOn);
+                _ = UpdateDouyinSignStatusAsync();
+            });
+
+            txtDouyinSignUrl.Text = SettingHelper.GetValue<string>(SettingHelper.DOUYIN_SIGN_URL, SettingHelper.DOUYIN_SIGN_URL_DEFAULT);
+            txtDouyinSignUrl.IsEnabled = swDouyinSignService.IsOn;
+            ApplyDouyinSignServiceSetting(txtDouyinSignUrl.Text, swDouyinSignService.IsOn);
+            _ = UpdateDouyinSignStatusAsync();
+            txtDouyinSignUrl.Loaded += new RoutedEventHandler((sender, e) =>
+            {
+                txtDouyinSignUrl.TextChanged += new TextChangedEventHandler((obj, args) =>
+                {
+                    var value = txtDouyinSignUrl.Text?.Trim() ?? "";
+                    SettingHelper.SetValue(SettingHelper.DOUYIN_SIGN_URL, value);
+                    ApplyDouyinSignServiceSetting(value, swDouyinSignService.IsOn);
+                });
+            });
+
             numFontsize.Value = SettingHelper.GetValue<double>(SettingHelper.MESSAGE_FONTSIZE, 14.0);
             numFontsize.Loaded += new RoutedEventHandler((sender, e) =>
             {
@@ -253,6 +276,19 @@ namespace AllLive.UWP.Views
             }
         }
 
+        private static void ApplyDouyinSignServiceSetting(string value, bool enabled)
+        {
+            var url = string.IsNullOrWhiteSpace(value) ? SettingHelper.DOUYIN_SIGN_URL_DEFAULT : value.Trim();
+            if (enabled)
+            {
+                CoreConfig.SetDouyinSignServiceUrl(url);
+            }
+            else
+            {
+                CoreConfig.SetDouyinSignServiceUrl(SettingHelper.DOUYIN_SIGN_URL_PUBLIC);
+            }
+        }
+
         private static void ApplyDouyinCookieSetting(string value)
         {
             CoreConfig.SetDouyinCookie(value);
@@ -333,6 +369,11 @@ namespace AllLive.UWP.Views
             await UpdateDouyuSignStatusAsync(true);
         }
 
+        private async void BtnDouyinSignCheck_Click(object sender, RoutedEventArgs e)
+        {
+            await UpdateDouyinSignStatusAsync(true);
+        }
+
         private async Task UpdateDouyuSignStatusAsync(bool showToast = false)
         {
             if (!swDouyuSignService.IsOn)
@@ -367,6 +408,47 @@ namespace AllLive.UWP.Views
             catch (Exception ex)
             {
                 txtDouyuSignStatus.Text = "不可用";
+                if (showToast)
+                {
+                    Utils.ShowMessageToast($"签名服务不可用：{ex.Message}");
+                }
+            }
+        }
+
+        private async Task UpdateDouyinSignStatusAsync(bool showToast = false)
+        {
+            if (!swDouyinSignService.IsOn)
+            {
+                txtDouyinSignStatus.Text = "已关闭";
+                return;
+            }
+
+            var url = string.IsNullOrWhiteSpace(txtDouyinSignUrl.Text)
+                ? SettingHelper.DOUYIN_SIGN_URL_DEFAULT
+                : txtDouyinSignUrl.Text.Trim();
+            var healthUrl = BuildHealthUrl(url);
+            txtDouyinSignStatus.Text = "检测中...";
+
+            try
+            {
+                using (var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) })
+                using (var response = await client.GetAsync(healthUrl))
+                {
+                    if (response.IsSuccessStatusCode)
+                    {
+                        txtDouyinSignStatus.Text = "运行中";
+                        if (showToast)
+                        {
+                            Utils.ShowMessageToast("签名服务运行正常");
+                        }
+                        return;
+                    }
+                    txtDouyinSignStatus.Text = $"异常({(int)response.StatusCode})";
+                }
+            }
+            catch (Exception ex)
+            {
+                txtDouyinSignStatus.Text = "不可用";
                 if (showToast)
                 {
                     Utils.ShowMessageToast($"签名服务不可用：{ex.Message}");

@@ -204,6 +204,71 @@
                             </Button>
                         </StackPanel>
                     </Grid>
+                    <Grid
+                        x:Name="SettingsDouyinSignSwitch"
+                        Margin="0,8,0,0"
+                        Padding="8,12"
+                        Background="{ThemeResource LayerFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="4">
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock>抖音签名服务</TextBlock>
+                            <TextBlock FontSize="12" Foreground="Gray">启用本地签名服务，关闭后使用公共服务</TextBlock>
+                        </StackPanel>
+                        <ToggleSwitch
+                            x:Name="swDouyinSignService"
+                            MinWidth="72"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center" />
+                    </Grid>
+                    <Grid
+                        x:Name="SettingsDouyinSign"
+                        Margin="0,8,0,0"
+                        Padding="8,12"
+                        Background="{ThemeResource LayerFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="4">
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock>抖音签名服务地址</TextBlock>
+                            <TextBlock FontSize="12" Foreground="Gray">本机示例：http://127.0.0.1:8788/api/douyin/sign</TextBlock>
+                        </StackPanel>
+                        <TextBox
+                            x:Name="txtDouyinSignUrl"
+                            Width="360"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center"
+                            PlaceholderText="留空使用默认" />
+                    </Grid>
+                    <Grid
+                        x:Name="SettingsDouyinSignStatus"
+                        Margin="0,8,0,0"
+                        Padding="8,12"
+                        Background="{ThemeResource LayerFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="4">
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock>抖音签名服务状态</TextBlock>
+                            <TextBlock FontSize="12" Foreground="Gray">检测本地服务 /health 启动：dotnet run --project AllLive.SignService</TextBlock>
+                        </StackPanel>
+                        <StackPanel
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center"
+                            Orientation="Horizontal">
+                            <TextBlock
+                                x:Name="txtDouyinSignStatus"
+                                VerticalAlignment="Center"
+                                Text="未知" />
+                            <Button
+                                x:Name="btnDouyinSignCheck"
+                                Margin="8,0,0,0"
+                                Click="BtnDouyinSignCheck_Click">
+                                检测
+                            </Button>
+                        </StackPanel>
+                    </Grid>
                     <TextBlock Margin="4,12" FontSize="18">账号</TextBlock>
                     <Grid
                         Padding="8,12"

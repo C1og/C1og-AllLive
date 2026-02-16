@@ -254,7 +254,8 @@ namespace AllLive.Core.Danmaku
 
             obj.payloadType = "ack";
             obj.logId = logId;
-            obj.payloadType = internalExt;
+            var payloadText = internalExt ?? string.Empty;
+            obj.Payload = Encoding.UTF8.GetBytes(payloadText);
 
             ws.Send(SerializeProto(obj));
 

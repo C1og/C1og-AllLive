@@ -38,6 +38,7 @@ namespace AllLive.UWP
 
             this.InitializeComponent();
             ApplyDouyuSignServiceSetting();
+            ApplyDouyinSignServiceSetting();
             AllLive.Core.Helper.CoreDebug.Logger = message => LogHelper.Log(message, LogType.DEBUG);
             if (Utils.IsXbox && SettingHelper.GetValue<int>(SettingHelper.XBOX_MODE, 0) == 0)
             {
@@ -59,6 +60,20 @@ namespace AllLive.UWP
             else
             {
                 CoreConfig.SetDouyuSignServiceUrl(SettingHelper.DOUYU_SIGN_URL_PUBLIC);
+            }
+        }
+
+        private static void ApplyDouyinSignServiceSetting()
+        {
+            var enabled = SettingHelper.GetValue<bool>(SettingHelper.DOUYIN_SIGN_ENABLED, true);
+            var url = SettingHelper.GetValue<string>(SettingHelper.DOUYIN_SIGN_URL, SettingHelper.DOUYIN_SIGN_URL_DEFAULT);
+            if (enabled)
+            {
+                CoreConfig.SetDouyinSignServiceUrl(url);
+            }
+            else
+            {
+                CoreConfig.SetDouyinSignServiceUrl(SettingHelper.DOUYIN_SIGN_URL_PUBLIC);
             }
         }
 

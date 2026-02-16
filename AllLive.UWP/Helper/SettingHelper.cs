@@ -62,6 +62,14 @@ namespace AllLive.UWP.Helper
         public const string DOUYU_SIGN_ENABLED = "DouyuSignEnabled";
 
         /// <summary>
+        /// 抖音签名服务地址（可为空，使用默认）
+        /// </summary>
+        public const string DOUYIN_SIGN_URL = "DouyinSignUrl";
+        public const string DOUYIN_SIGN_URL_DEFAULT = "http://127.0.0.1:8788/api/douyin/sign";
+        public const string DOUYIN_SIGN_URL_PUBLIC = "https://dy.nsapps.cn/signature";
+        public const string DOUYIN_SIGN_ENABLED = "DouyinSignEnabled";
+
+        /// <summary>
         /// 音量
         /// </summary>
         public const string PLAYER_VOLUME = "PlayerVolume";
