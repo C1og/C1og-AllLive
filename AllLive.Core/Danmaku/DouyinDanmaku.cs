@@ -4,6 +4,8 @@ using AllLive.Core.Models;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
+using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
 using System.Timers;
@@ -33,6 +35,10 @@ namespace AllLive.Core.Danmaku
         public event EventHandler<string> OnClose;
         private string baseUrl = "wss://webcast3-ws-web-lq.douyin.com/webcast/im/push/v2/";
         private const string UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0";
+        private const string VersionCode = "180800";
+        private const string WebcastSdkVersion = "1.0.14-beta.0";
+        private const string UpdateVersionCode = WebcastSdkVersion;
+        private static readonly Lazy<string> WebMssdkScript = new Lazy<string>(LoadWebMssdkScript);
 
         Timer timer;
         WebSocket ws;
@@ -47,9 +53,9 @@ namespace AllLive.Core.Danmaku
             var query = new Dictionary<string, string>()
             {
             { "app_name", "douyin_web" },
-            { "version_code", "180800" },
-            { "webcast_sdk_version", "1.3.0" },
-            { "update_version_code", "1.3.0" },
+            { "version_code", VersionCode },
+            { "webcast_sdk_version", WebcastSdkVersion },
+            { "update_version_code", UpdateVersionCode },
             { "compress", "gzip" },
             // {"internal_ext", $"internal_src:dim|wss_push_room_id:{danmakuArgs.roomId}|wss_push_did:{danmakuArgs.userId}|dim_log_id:20230626152702E8F63662383A350588E1|fetch_time:1687764422114|seq:1|wss_info:0-1687764422114-0-0|wrds_kvs:WebcastRoomRankMessage-1687764036509597990_InputPanelComponentSyncData-1687736682345173033_WebcastRoomStatsMessage-1687764414427812578"},
             { "cursor", $"h-1_t-{ts}_r-1_d-1_u-1" },
@@ -80,11 +86,8 @@ namespace AllLive.Core.Danmaku
         };
 
             var sign = await GetSign(danmakuArgs.RoomId, danmakuArgs.UserId);
-            if (!string.IsNullOrWhiteSpace(sign))
-            {
-                query.Add("signature", sign);
-            }
-            else
+            query.Add("signature", sign ?? "");
+            if (string.IsNullOrWhiteSpace(sign))
             {
                 CoreDebug.Log("[DouyinDanmaku] signature为空，将尝试无签名连接");
             }
@@ -303,31 +306,303 @@ namespace AllLive.Core.Danmaku
 
         /// <summary>
         /// 获取Websocket签名
-        /// 服务端代码：https://github.com/lovelyyoshino/douyin_python
         /// </summary>
-        /// <param name="roomId">房间ID</param>
-        /// <param name="uniqueId">用户唯一ID</param>
-        /// <returns></returns>
         private async Task<string> GetSign(string roomId, string uniqueId)
         {
+            var signParam = BuildSignParam(roomId, uniqueId);
+            if (string.IsNullOrWhiteSpace(signParam))
+            {
+                CoreDebug.Log($"[DouyinDanmaku] signature参数为空 roomId={roomId}");
+                return "";
+            }
+            var md5 = Utils.ToMD5(signParam);
+            var quickJsResult = TryGetSignByQuickJs(md5, out var quickJsError);
+            if (!string.IsNullOrWhiteSpace(quickJsResult))
+            {
+                CoreDebug.Log($"[DouyinDanmaku] QuickJS签名成功 len={quickJsResult.Length}");
+                return quickJsResult;
+            }
+            if (!string.IsNullOrWhiteSpace(quickJsError))
+            {
+                CoreDebug.Log($"[DouyinDanmaku] QuickJS签名失败: {quickJsError}");
+            }
+            var serviceResult = await GetSignByService(roomId, uniqueId);
+            if (!string.IsNullOrWhiteSpace(serviceResult))
+            {
+                return serviceResult;
+            }
+            CoreDebug.Log($"[DouyinDanmaku] signature获取失败 roomId={roomId}");
+            return "";
+        }
+
+        private static string BuildSignParam(string roomId, string uniqueId)
+        {
+            var pairs = new List<KeyValuePair<string, string>>()
+            {
+                new KeyValuePair<string, string>("live_id", "1"),
+                new KeyValuePair<string, string>("aid", "6383"),
+                new KeyValuePair<string, string>("version_code", VersionCode),
+                new KeyValuePair<string, string>("webcast_sdk_version", WebcastSdkVersion),
+                new KeyValuePair<string, string>("room_id", roomId ?? ""),
+                new KeyValuePair<string, string>("sub_room_id", ""),
+                new KeyValuePair<string, string>("sub_channel_id", ""),
+                new KeyValuePair<string, string>("did_rule", "3"),
+                new KeyValuePair<string, string>("user_unique_id", uniqueId ?? ""),
+                new KeyValuePair<string, string>("device_platform", "web"),
+                new KeyValuePair<string, string>("device_type", ""),
+                new KeyValuePair<string, string>("ac", ""),
+                new KeyValuePair<string, string>("identity", "audience"),
+            };
+            return string.Join(",", pairs.Select(item => $"{item.Key}={item.Value}"));
+        }
+
+        private static string TryGetSignByQuickJs(string md5Param, out string error)
+        {
+            error = null;
+            object runtime = null;
+            object context = null;
             try
             {
-                var body = JsonConvert.SerializeObject(new { roomId, uniqueId });
-                var result = await HttpUtil.PostJsonString("https://dy.nsapps.cn/signature", body);
-                var json = JObject.Parse(result);
-                var sign = json["data"]?["signature"]?.ToString();
-                if (string.IsNullOrWhiteSpace(sign))
+                var runtimeType = Type.GetType("QuickJS.QuickJSRuntime, QuickJS.NET");
+                if (runtimeType == null)
                 {
-                    CoreDebug.Log($"[DouyinDanmaku] signature接口返回空 roomId={roomId}");
-                    return "";
+                    error = "QuickJSRuntime类型未找到";
+                    return null;
                 }
-                return sign;
+                runtime = Activator.CreateInstance(runtimeType);
+                var createContext = runtimeType.GetMethod("CreateContext", Type.EmptyTypes);
+                context = createContext?.Invoke(runtime, null);
+                if (context == null)
+                {
+                    error = "CreateContext返回空";
+                    return null;
+                }
+
+                var contextType = context.GetType();
+                var flagsType = Type.GetType("QuickJS.JSEvalFlags, QuickJS.NET");
+                object flags = null;
+                var evalMethod = flagsType == null
+                    ? contextType.GetMethod("Eval", new[] { typeof(string), typeof(string) })
+                    : contextType.GetMethod("Eval", new[] { typeof(string), typeof(string), flagsType });
+                if (evalMethod == null)
+                {
+                    evalMethod = contextType.GetMethod("Eval", new[] { typeof(string), typeof(string) });
+                }
+                if (evalMethod == null)
+                {
+                    error = "Eval方法未找到";
+                    return null;
+                }
+                if (flagsType != null && evalMethod.GetParameters().Length == 3)
+                {
+                    flags = Enum.Parse(flagsType, "Global");
+                }
+
+                string Eval(string code)
+                {
+                    if (evalMethod.GetParameters().Length == 3)
+                    {
+                        return evalMethod.Invoke(context, new object[] { code, "", flags })?.ToString();
+                    }
+                    return evalMethod.Invoke(context, new object[] { code, "" })?.ToString();
+                }
+
+                var script = WebMssdkScript.Value;
+                if (string.IsNullOrWhiteSpace(script))
+                {
+                    error = "webmssdk脚本为空";
+                    return null;
+                }
+                Eval(script);
+                var result = Eval($"get_sign('{EscapeJs(md5Param)}')");
+                if (string.IsNullOrWhiteSpace(result))
+                {
+                    error = "get_sign返回空";
+                    return null;
+                }
+                return result;
             }
             catch (Exception ex)
             {
-                CoreDebug.Log($"[DouyinDanmaku] signature获取失败 roomId={roomId} err={ex.GetType().FullName}: {ex.Message}");
+                error = $"{ex.GetType().FullName}: {ex.Message}";
+                return null;
+            }
+            finally
+            {
+                if (context is IDisposable contextDisposable)
+                {
+                    contextDisposable.Dispose();
+                }
+                if (runtime is IDisposable runtimeDisposable)
+                {
+                    runtimeDisposable.Dispose();
+                }
+            }
+        }
+
+        private async Task<string> GetSignByService(string roomId, string uniqueId)
+        {
+            var payload = JsonConvert.SerializeObject(new { roomId, uniqueId });
+            foreach (var url in GetSignServiceUrls())
+            {
+                try
+                {
+                    using (var client = new HttpClient())
+                    {
+                        client.Timeout = url.Contains("127.0.0.1") || url.Contains("localhost")
+                            ? TimeSpan.FromSeconds(2)
+                            : TimeSpan.FromSeconds(10);
+                        var start = DateTimeOffset.UtcNow;
+                        using (var content = new StringContent(payload, Encoding.UTF8, "application/json"))
+                        using (var response = await client.PostAsync(url, content))
+                        {
+                            var body = await response.Content.ReadAsStringAsync();
+                            var elapsedMs = (DateTimeOffset.UtcNow - start).TotalMilliseconds;
+                            CoreDebug.Log($"[DouyinDanmaku] signature服务 url={url} status={(int)response.StatusCode} {response.ReasonPhrase} elapsedMs={elapsedMs:F0} bodyLen={body?.Length ?? 0}");
+                            if (!response.IsSuccessStatusCode)
+                            {
+                                CoreDebug.Log($"[DouyinDanmaku] signature服务非200 url={url} bodyHead={TrimForLog(body)}");
+                                continue;
+                            }
+                            var json = JObject.Parse(body);
+                            var data = json["data"];
+                            var sign = data?["signature"]?.ToString();
+                            if (string.IsNullOrWhiteSpace(sign))
+                            {
+                                sign = data?.ToString();
+                            }
+                            if (string.IsNullOrWhiteSpace(sign))
+                            {
+                                sign = json["signature"]?.ToString();
+                            }
+                            if (!string.IsNullOrWhiteSpace(sign))
+                            {
+                                CoreDebug.Log($"[DouyinDanmaku] signature服务成功 url={url} signLen={sign.Length}");
+                                return sign;
+                            }
+                            CoreDebug.Log($"[DouyinDanmaku] signature服务返回空 url={url} code={json["code"]} msg={json["msg"]}");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    CoreDebug.Log($"[DouyinDanmaku] signature服务异常 url={url} err={ex.GetType().FullName} 0x{ex.HResult:X8} {ex.Message}");
+                }
+            }
+            return "";
+        }
+
+        private static IEnumerable<string> GetSignServiceUrls()
+        {
+            try
+            {
+                var configured = CoreConfig.GetDouyinSignServiceUrls();
+                if (configured != null && configured.Count > 0)
+                {
+                    return configured;
+                }
+            }
+            catch
+            {
+            }
+
+            var urls = new List<string>();
+            if (!IsUwpRuntime())
+            {
+                try
+                {
+                    var env = Environment.GetEnvironmentVariable("ALLLIVE_DOUYIN_SIGN_URL");
+                    if (!string.IsNullOrWhiteSpace(env))
+                    {
+                        urls.AddRange(SplitUrls(env));
+                    }
+                }
+                catch
+                {
+                }
+            }
+            urls.Add("http://127.0.0.1:8788/api/douyin/sign");
+            urls.Add("http://localhost:8788/api/douyin/sign");
+            urls.Add("https://dy.nsapps.cn/signature");
+            return urls.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase);
+        }
+
+        private static IEnumerable<string> SplitUrls(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return Array.Empty<string>();
+            }
+            return raw
+                .Split(new[] { ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(x => x.Trim())
+                .Where(x => !string.IsNullOrWhiteSpace(x));
+        }
+
+        private static string LoadWebMssdkScript()
+        {
+            try
+            {
+                var assembly = typeof(DouyinDanmaku).Assembly;
+                var resourceName = assembly.GetManifestResourceNames()
+                    .FirstOrDefault(name => name.EndsWith("douyin-webmssdk.js", StringComparison.OrdinalIgnoreCase));
+                if (string.IsNullOrWhiteSpace(resourceName))
+                {
+                    CoreDebug.Log("[DouyinDanmaku] webmssdk脚本资源未找到");
+                    return "";
+                }
+                using (var stream = assembly.GetManifestResourceStream(resourceName))
+                {
+                    if (stream == null)
+                    {
+                        CoreDebug.Log("[DouyinDanmaku] webmssdk脚本资源读取失败");
+                        return "";
+                    }
+                    using (var reader = new StreamReader(stream, Encoding.UTF8))
+                    {
+                        return reader.ReadToEnd();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                CoreDebug.Log($"[DouyinDanmaku] webmssdk脚本加载失败: {ex.GetType().FullName}: {ex.Message}");
                 return "";
             }
+        }
+
+        private static string TrimForLog(string value, int maxLen = 200)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return "";
+            }
+            if (value.Length <= maxLen)
+            {
+                return value;
+            }
+            return value.Substring(0, maxLen);
+        }
+
+        private static bool IsUwpRuntime()
+        {
+            try
+            {
+                return Type.GetType("Windows.ApplicationModel.Package, Windows, ContentType=WindowsRuntime") != null;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static string EscapeJs(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return "";
+            }
+            return value.Replace("\\", "\\\\").Replace("'", "\\'");
         }
     }
 }

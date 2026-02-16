@@ -3,11 +3,17 @@ using AllLive.SignService;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.IO;
+using System.Linq;
 
 var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
 
 app.Urls.Add("http://0.0.0.0:8788");
+
+const string DouyinVersionCode = "180800";
+const string DouyinSdkVersion = "1.0.14-beta.0";
+var douyinWebmssdkScript = new Lazy<string>(LoadDouyinWebmssdkScript);
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 
@@ -82,6 +88,46 @@ app.MapPost("/api/douyu/sign", async (HttpRequest request) =>
     }
 });
 
+app.MapPost("/api/douyin/sign", async (HttpRequest request) =>
+{
+    DouyinSignRequest? payload;
+    try
+    {
+        payload = await request.ReadFromJsonAsync<DouyinSignRequest>();
+    }
+    catch
+    {
+        return Results.Json(new { code = -1, msg = "invalid json" });
+    }
+
+    var roomId = payload?.roomId ?? string.Empty;
+    var uniqueId = payload?.uniqueId ?? string.Empty;
+    if (string.IsNullOrWhiteSpace(roomId) || string.IsNullOrWhiteSpace(uniqueId))
+    {
+        return Results.Json(new { code = -1, msg = "roomId or uniqueId empty" });
+    }
+
+    try
+    {
+        var script = douyinWebmssdkScript.Value;
+        if (string.IsNullOrWhiteSpace(script))
+        {
+            return Results.Json(new { code = -1, msg = "webmssdk script empty" });
+        }
+
+        var sign = BuildDouyinSignature(script, roomId, uniqueId);
+        if (string.IsNullOrWhiteSpace(sign))
+        {
+            return Results.Json(new { code = -1, msg = "signature empty" });
+        }
+        return Results.Json(new { code = 0, data = new { signature = sign }, msg = "" });
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new { code = -1, msg = ex.Message });
+    }
+});
+
 app.MapPost("/api/douyin/abogus", async (HttpRequest request) =>
 {
     AbogusRequest? payload;
@@ -112,6 +158,58 @@ app.MapPost("/api/douyin/abogus", async (HttpRequest request) =>
 });
 
 app.Run();
+
+static string BuildDouyinSignature(string script, string roomId, string uniqueId)
+{
+    var signParam = BuildDouyinSignParam(roomId, uniqueId);
+    if (string.IsNullOrWhiteSpace(signParam))
+    {
+        return "";
+    }
+    var md5 = Md5Hex(signParam);
+    var engine = new Engine();
+    engine.Execute(script);
+    var result = engine.Evaluate($"get_sign('{EscapeJs(md5)}')")?.ToString();
+    return result ?? "";
+}
+
+static string BuildDouyinSignParam(string roomId, string uniqueId)
+{
+    var pairs = new List<KeyValuePair<string, string>>
+    {
+        new KeyValuePair<string, string>("live_id", "1"),
+        new KeyValuePair<string, string>("aid", "6383"),
+        new KeyValuePair<string, string>("version_code", DouyinVersionCode),
+        new KeyValuePair<string, string>("webcast_sdk_version", DouyinSdkVersion),
+        new KeyValuePair<string, string>("room_id", roomId ?? ""),
+        new KeyValuePair<string, string>("sub_room_id", ""),
+        new KeyValuePair<string, string>("sub_channel_id", ""),
+        new KeyValuePair<string, string>("did_rule", "3"),
+        new KeyValuePair<string, string>("user_unique_id", uniqueId ?? ""),
+        new KeyValuePair<string, string>("device_platform", "web"),
+        new KeyValuePair<string, string>("device_type", ""),
+        new KeyValuePair<string, string>("ac", ""),
+        new KeyValuePair<string, string>("identity", "audience"),
+    };
+    return string.Join(",", pairs.Select(item => $"{item.Key}={item.Value}"));
+}
+
+static string LoadDouyinWebmssdkScript()
+{
+    try
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "Assets", "douyin-webmssdk.js");
+        if (!File.Exists(path))
+        {
+            return "";
+        }
+        return File.ReadAllText(path, Encoding.UTF8);
+    }
+    catch
+    {
+        return "";
+    }
+}
 
 static string ExtractSignJs(string html)
 {
@@ -146,5 +244,6 @@ static string EscapeJs(string value)
     return value.Replace("\\", "\\\\").Replace("'", "\\'");
 }
 
+record DouyinSignRequest(string roomId, string uniqueId);
 record SignRequest(string html, string rid);
 record AbogusRequest(string url, string? userAgent, string? body);

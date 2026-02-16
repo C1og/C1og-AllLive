@@ -8,6 +8,7 @@ namespace AllLive.Core.Helper
     {
         private static readonly object _lock = new object();
         private static List<string> _douyuSignServiceUrls = new List<string>();
+        private static List<string> _douyinSignServiceUrls = new List<string>();
         private static string _douyinCookie = "";
 
         public static IReadOnlyList<string> GetDouyuSignServiceUrls()
@@ -42,6 +43,40 @@ namespace AllLive.Core.Helper
                 .Split(new[] { ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
                 .Select(x => x.Trim());
             SetDouyuSignServiceUrls(urls);
+        }
+
+        public static IReadOnlyList<string> GetDouyinSignServiceUrls()
+        {
+            lock (_lock)
+            {
+                return _douyinSignServiceUrls.ToList();
+            }
+        }
+
+        public static void SetDouyinSignServiceUrls(IEnumerable<string> urls)
+        {
+            var list = (urls ?? Enumerable.Empty<string>())
+                .Select(x => x?.Trim())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            lock (_lock)
+            {
+                _douyinSignServiceUrls = list;
+            }
+        }
+
+        public static void SetDouyinSignServiceUrl(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                SetDouyinSignServiceUrls(Array.Empty<string>());
+                return;
+            }
+            var urls = value
+                .Split(new[] { ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(x => x.Trim());
+            SetDouyinSignServiceUrls(urls);
         }
 
         public static string GetDouyinCookie()
