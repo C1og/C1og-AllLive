@@ -1,5 +1,5 @@
 ﻿using AllLive.UWP.Helper;
-using AllLive.Core.Helper;
+using CoreConfig = AllLive.Core.Helper.CoreConfig;
 using AllLive.UWP.ViewModels;
 using Microsoft.Toolkit.Uwp.Helpers;
 using Microsoft.UI.Xaml.Controls;

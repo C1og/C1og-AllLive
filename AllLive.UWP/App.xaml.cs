@@ -1,5 +1,5 @@
 ﻿using AllLive.UWP.Helper;
-using AllLive.Core.Helper;
+using CoreConfig = AllLive.Core.Helper.CoreConfig;
 using System;
 using System.Collections.Generic;
 using System.IO;
