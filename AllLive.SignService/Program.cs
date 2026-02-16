@@ -34,6 +34,10 @@ app.MapPost("/api/douyu/sign", async (HttpRequest request) =>
         var js = ExtractSignJs(html);
         if (string.IsNullOrEmpty(js))
         {
+            js = html;
+        }
+        if (string.IsNullOrEmpty(js) || !js.Contains("ub98484234"))
+        {
             return Results.Json(new { code = -1, msg = "sign js empty" });
         }
         js = Regex.Replace(js, @"eval.*?;}", "strc;}");
