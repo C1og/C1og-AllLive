@@ -495,13 +495,20 @@
                             HorizontalAlignment="Right"
                             VerticalAlignment="Center"
                             Orientation="Horizontal">
+                            <ToggleSwitch
+                                x:Name="swLogEnabled"
+                                Margin="0,0,8,0"
+                                MinWidth="72"
+                                OffContent="日志关"
+                                OnContent="日志开"
+                                VerticalAlignment="Center" />
                             <Button
                                 x:Name="BtnLog"
                                 Margin="8,0"
                                 Click="BtnLog_Click">
                                 运行日志
                             </Button>
-                            <Button x:Name="BtnGithub" Click="BtnGithub_Click">项目主页</Button>
+                            <Button x:Name="BtnProjectFolder" Click="BtnProjectFolder_Click">项目目录</Button>
                         </StackPanel>
                     </Grid>
 

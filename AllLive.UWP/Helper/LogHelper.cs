@@ -19,10 +19,19 @@ namespace AllLive.UWP.Helper
     }
     public class LogHelper
     {
+        public static bool Enabled { get; private set; } = true;
         public static LoggingConfiguration config;
         public static NLog.Logger logger = NLog.LogManager.GetCurrentClassLogger();
+        public static void SetEnabled(bool enabled)
+        {
+            Enabled = enabled;
+        }
         public static void Log(string message, LogType type, Exception ex = null)
         {
+            if (!Enabled)
+            {
+                return;
+            }
             if (config == null)
             {
                 config = new NLog.Config.LoggingConfiguration();

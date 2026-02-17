@@ -104,6 +104,11 @@ namespace AllLive.UWP.Helper
         public const string PANE_DISPLAY_MODE = "PaneDisplayMode";
 
         /// <summary>
+        /// 是否启用日志
+        /// </summary>
+        public const string LOG_ENABLED = "LogEnabled";
+
+        /// <summary>
         /// 忽略哔哩哔哩登录提醒
         /// </summary>
         public const string IGNORE_BILI_LOGIN_TIP = "IgnoreBiliLoginTip";

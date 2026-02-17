@@ -125,6 +125,15 @@ namespace AllLive.UWP.Views
                 });
             });
 
+            //日志开关
+            swLogEnabled.IsOn = SettingHelper.GetValue<bool>(SettingHelper.LOG_ENABLED, true);
+            LogHelper.SetEnabled(swLogEnabled.IsOn);
+            swLogEnabled.Toggled += new RoutedEventHandler((sender, e) =>
+            {
+                SettingHelper.SetValue(SettingHelper.LOG_ENABLED, swLogEnabled.IsOn);
+                LogHelper.SetEnabled(swLogEnabled.IsOn);
+            });
+
             //关注列表自动刷新间隔
             var favoriteRefreshMinutes = SettingHelper.GetValue<int>(SettingHelper.FAVORITE_AUTO_REFRESH_MINUTES, 5);
             if (favoriteRefreshMinutes < 1)
@@ -523,9 +532,9 @@ namespace AllLive.UWP.Views
             SettingHelper.SetValue(SettingHelper.LiveDanmaku.SHIELD_WORD, JsonConvert.SerializeObject(settingVM.ShieldWords));
         }
 
-        private async void BtnGithub_Click(object sender, RoutedEventArgs e)
+        private async void BtnProjectFolder_Click(object sender, RoutedEventArgs e)
         {
-            await Launcher.LaunchUriAsync(new Uri("https://github.com/xiaoyaocz/AllLive"));
+            await Launcher.LaunchFolderPathAsync(@"D:\D-Software\C1og-AllLive");
         }
 
         private async void BtnLog_Click(object sender, RoutedEventArgs e)
