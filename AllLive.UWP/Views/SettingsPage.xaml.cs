@@ -13,6 +13,8 @@ using System.Threading.Tasks;
 using System.Runtime.InteropServices.WindowsRuntime;
 using Windows.Foundation;
 using Windows.Foundation.Collections;
+using Windows.Storage;
+using Windows.Storage.Pickers;
 using Windows.System;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
@@ -294,6 +296,254 @@ namespace AllLive.UWP.Views
                 BtnLogoutBili.Visibility = Visibility.Visible;
             }
            
+        }
+
+        private class SettingsBackupData
+        {
+            public int Version { get; set; } = 1;
+            public DateTimeOffset ExportedAt { get; set; }
+            public int? Theme { get; set; }
+            public int? XboxMode { get; set; }
+            public int? PaneDisplayMode { get; set; }
+            public bool? MouseBack { get; set; }
+            public int? FavoriteAutoRefreshMinutes { get; set; }
+            public bool? NewWindowLiveRoom { get; set; }
+            public int? VideoDecoder { get; set; }
+            public bool? DouyuSignEnabled { get; set; }
+            public string DouyuSignUrl { get; set; }
+            public bool? DouyinSignEnabled { get; set; }
+            public string DouyinSignUrl { get; set; }
+            public double? MessageFontSize { get; set; }
+            public bool? LiveDanmuShow { get; set; }
+            public bool? KeepSuperChat { get; set; }
+            public int? DanmuCleanCount { get; set; }
+            public List<string> ShieldWords { get; set; }
+            public bool? LogEnabled { get; set; }
+            public string DouyinCookie { get; set; }
+        }
+
+        private static int ClampInt(int value, int min, int max)
+        {
+            if (value < min)
+            {
+                return min;
+            }
+            if (value > max)
+            {
+                return max;
+            }
+            return value;
+        }
+
+        private static int NormalizeFavoriteRefreshMinutes(int? value)
+        {
+            var minutes = value ?? SettingHelper.GetValue<int>(SettingHelper.FAVORITE_AUTO_REFRESH_MINUTES, 5);
+            return minutes < 1 ? 1 : minutes;
+        }
+
+        private static int NormalizeCleanCount(int? value)
+        {
+            var count = value ?? SettingHelper.GetValue<int>(SettingHelper.LiveDanmaku.DANMU_CLEAN_COUNT, 200);
+            return count < 40 ? 40 : count;
+        }
+
+        private static double NormalizeFontSize(double? value)
+        {
+            var size = value ?? SettingHelper.GetValue<double>(SettingHelper.MESSAGE_FONTSIZE, 14.0);
+            return size < 10 ? 10 : size;
+        }
+
+        private List<string> GetShieldWordsForBackup()
+        {
+            if (settingVM?.ShieldWords == null)
+            {
+                var raw = SettingHelper.GetValue<string>(SettingHelper.LiveDanmaku.SHIELD_WORD, "[]");
+                return JsonConvert.DeserializeObject<List<string>>(raw) ?? new List<string>();
+            }
+            return settingVM.ShieldWords.ToList();
+        }
+
+        private void ApplyShieldWords(IEnumerable<string> words)
+        {
+            var list = words?.Where(word => !string.IsNullOrWhiteSpace(word))
+                .Select(word => word.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList() ?? new List<string>();
+            settingVM.ShieldWords.Clear();
+            foreach (var word in list)
+            {
+                settingVM.ShieldWords.Add(word);
+            }
+            SettingHelper.SetValue(SettingHelper.LiveDanmaku.SHIELD_WORD, JsonConvert.SerializeObject(settingVM.ShieldWords));
+        }
+
+        private async Task<SettingsBackupData> BuildSettingsBackupAsync()
+        {
+            var cookie = await DouyinCookieStore.LoadAsync();
+            if (string.IsNullOrWhiteSpace(cookie))
+            {
+                cookie = SettingHelper.GetValue<string>(SettingHelper.DOUYIN_COOKIE, "");
+            }
+            return new SettingsBackupData
+            {
+                ExportedAt = DateTimeOffset.Now,
+                Theme = SettingHelper.GetValue<int>(SettingHelper.THEME, 0),
+                XboxMode = SettingHelper.GetValue<int>(SettingHelper.XBOX_MODE, 0),
+                PaneDisplayMode = SettingHelper.GetValue<int>(SettingHelper.PANE_DISPLAY_MODE, 0),
+                MouseBack = SettingHelper.GetValue<bool>(SettingHelper.MOUSE_BACK, true),
+                FavoriteAutoRefreshMinutes = NormalizeFavoriteRefreshMinutes(null),
+                NewWindowLiveRoom = SettingHelper.GetValue<bool>(SettingHelper.NEW_WINDOW_LIVEROOM, true),
+                VideoDecoder = SettingHelper.GetValue<int>(SettingHelper.VIDEO_DECODER, 1),
+                DouyuSignEnabled = SettingHelper.GetValue<bool>(SettingHelper.DOUYU_SIGN_ENABLED, true),
+                DouyuSignUrl = SettingHelper.GetValue<string>(SettingHelper.DOUYU_SIGN_URL, SettingHelper.DOUYU_SIGN_URL_DEFAULT),
+                DouyinSignEnabled = SettingHelper.GetValue<bool>(SettingHelper.DOUYIN_SIGN_ENABLED, true),
+                DouyinSignUrl = SettingHelper.GetValue<string>(SettingHelper.DOUYIN_SIGN_URL, SettingHelper.DOUYIN_SIGN_URL_DEFAULT),
+                MessageFontSize = SettingHelper.GetValue<double>(SettingHelper.MESSAGE_FONTSIZE, 14.0),
+                LiveDanmuShow = SettingHelper.GetValue<bool>(SettingHelper.LiveDanmaku.SHOW, false),
+                KeepSuperChat = SettingHelper.GetValue<bool>(SettingHelper.LiveDanmaku.KEEP_SUPER_CHAT, true),
+                DanmuCleanCount = SettingHelper.GetValue<int>(SettingHelper.LiveDanmaku.DANMU_CLEAN_COUNT, 200),
+                ShieldWords = GetShieldWordsForBackup(),
+                LogEnabled = SettingHelper.GetValue<bool>(SettingHelper.LOG_ENABLED, false),
+                DouyinCookie = cookie ?? ""
+            };
+        }
+
+        private async Task ApplySettingsBackupAsync(SettingsBackupData data)
+        {
+            if (data == null)
+            {
+                return;
+            }
+            var theme = ClampInt(data.Theme ?? SettingHelper.GetValue<int>(SettingHelper.THEME, 0), 0, 2);
+            var xboxMode = ClampInt(data.XboxMode ?? SettingHelper.GetValue<int>(SettingHelper.XBOX_MODE, 0), 0, 1);
+            var paneDisplayMode = ClampInt(data.PaneDisplayMode ?? SettingHelper.GetValue<int>(SettingHelper.PANE_DISPLAY_MODE, 0), 0, 1);
+            var mouseBack = data.MouseBack ?? SettingHelper.GetValue<bool>(SettingHelper.MOUSE_BACK, true);
+            var favoriteRefreshMinutes = NormalizeFavoriteRefreshMinutes(data.FavoriteAutoRefreshMinutes);
+            var newWindowLiveRoom = data.NewWindowLiveRoom ?? SettingHelper.GetValue<bool>(SettingHelper.NEW_WINDOW_LIVEROOM, true);
+            var videoDecoder = ClampInt(data.VideoDecoder ?? SettingHelper.GetValue<int>(SettingHelper.VIDEO_DECODER, 1), 0, 2);
+            var douyuSignEnabled = data.DouyuSignEnabled ?? SettingHelper.GetValue<bool>(SettingHelper.DOUYU_SIGN_ENABLED, true);
+            var douyuSignUrl = data.DouyuSignUrl ?? SettingHelper.GetValue<string>(SettingHelper.DOUYU_SIGN_URL, SettingHelper.DOUYU_SIGN_URL_DEFAULT);
+            var douyinSignEnabled = data.DouyinSignEnabled ?? SettingHelper.GetValue<bool>(SettingHelper.DOUYIN_SIGN_ENABLED, true);
+            var douyinSignUrl = data.DouyinSignUrl ?? SettingHelper.GetValue<string>(SettingHelper.DOUYIN_SIGN_URL, SettingHelper.DOUYIN_SIGN_URL_DEFAULT);
+            var messageFontSize = NormalizeFontSize(data.MessageFontSize);
+            var liveDanmuShow = data.LiveDanmuShow ?? SettingHelper.GetValue<bool>(SettingHelper.LiveDanmaku.SHOW, false);
+            var keepSuperChat = data.KeepSuperChat ?? SettingHelper.GetValue<bool>(SettingHelper.LiveDanmaku.KEEP_SUPER_CHAT, true);
+            var danmuCleanCount = NormalizeCleanCount(data.DanmuCleanCount);
+            var logEnabled = data.LogEnabled ?? SettingHelper.GetValue<bool>(SettingHelper.LOG_ENABLED, false);
+
+            SettingHelper.SetValue(SettingHelper.THEME, theme);
+            SettingHelper.SetValue(SettingHelper.XBOX_MODE, xboxMode);
+            SettingHelper.SetValue(SettingHelper.PANE_DISPLAY_MODE, paneDisplayMode);
+            SettingHelper.SetValue(SettingHelper.MOUSE_BACK, mouseBack);
+            SettingHelper.SetValue(SettingHelper.FAVORITE_AUTO_REFRESH_MINUTES, favoriteRefreshMinutes);
+            SettingHelper.SetValue(SettingHelper.NEW_WINDOW_LIVEROOM, newWindowLiveRoom);
+            SettingHelper.SetValue(SettingHelper.VIDEO_DECODER, videoDecoder);
+            SettingHelper.SetValue(SettingHelper.DOUYU_SIGN_ENABLED, douyuSignEnabled);
+            SettingHelper.SetValue(SettingHelper.DOUYU_SIGN_URL, douyuSignUrl ?? "");
+            SettingHelper.SetValue(SettingHelper.DOUYIN_SIGN_ENABLED, douyinSignEnabled);
+            SettingHelper.SetValue(SettingHelper.DOUYIN_SIGN_URL, douyinSignUrl ?? "");
+            SettingHelper.SetValue(SettingHelper.MESSAGE_FONTSIZE, messageFontSize);
+            SettingHelper.SetValue(SettingHelper.LiveDanmaku.SHOW, liveDanmuShow);
+            SettingHelper.SetValue(SettingHelper.LiveDanmaku.KEEP_SUPER_CHAT, keepSuperChat);
+            SettingHelper.SetValue(SettingHelper.LiveDanmaku.DANMU_CLEAN_COUNT, danmuCleanCount);
+            SettingHelper.SetValue(SettingHelper.LOG_ENABLED, logEnabled);
+
+            if (data.ShieldWords != null)
+            {
+                ApplyShieldWords(data.ShieldWords);
+            }
+
+            if (data.DouyinCookie != null)
+            {
+                var normalizedCookie = NormalizeDouyinCookieInput(data.DouyinCookie);
+                var trimmed = TrimDouyinCookieForSettings(normalizedCookie);
+                SettingHelper.SetValue(SettingHelper.DOUYIN_COOKIE, trimmed);
+                ApplyDouyinCookieSetting(normalizedCookie);
+                await DouyinCookieStore.SaveAsync(normalizedCookie);
+                _isUpdatingDouyinCookie = true;
+                txtDouyinCookie.Text = normalizedCookie;
+                txtDouyinCookie.SelectionStart = txtDouyinCookie.Text.Length;
+                _isUpdatingDouyinCookie = false;
+            }
+
+            cbTheme.SelectedIndex = theme;
+            cbXboxMode.SelectedIndex = xboxMode;
+            cbPaneDisplayMode.SelectedIndex = paneDisplayMode;
+            swMouseClosePage.IsOn = mouseBack;
+            numFavoriteRefreshInterval.Value = favoriteRefreshMinutes;
+            swNewWindow.IsOn = newWindowLiveRoom;
+            cbDecoder.SelectedIndex = videoDecoder;
+            swDouyuSignService.IsOn = douyuSignEnabled;
+            txtDouyuSignUrl.Text = douyuSignUrl ?? "";
+            swDouyinSignService.IsOn = douyinSignEnabled;
+            txtDouyinSignUrl.Text = douyinSignUrl ?? "";
+            numFontsize.Value = messageFontSize;
+            DanmuSettingState.IsOn = liveDanmuShow;
+            SettingKeepSC.IsOn = keepSuperChat;
+            numCleanCount.Value = danmuCleanCount;
+            swLogEnabled.IsOn = logEnabled;
+
+            LogHelper.SetEnabled(logEnabled);
+            ApplyDouyuSignServiceSetting(txtDouyuSignUrl.Text, swDouyuSignService.IsOn);
+            ApplyDouyinSignServiceSetting(txtDouyinSignUrl.Text, swDouyinSignService.IsOn);
+            _ = UpdateDouyuSignStatusAsync();
+            _ = UpdateDouyinSignStatusAsync();
+        }
+
+        private async void BtnSettingsExport_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var backup = await BuildSettingsBackupAsync();
+                var picker = new FileSavePicker
+                {
+                    SuggestedStartLocation = PickerLocationId.DocumentsLibrary,
+                    SuggestedFileName = $"AllLive-Settings-{DateTime.Now:yyyyMMdd-HHmmss}"
+                };
+                picker.FileTypeChoices.Add("JSON", new List<string> { ".json" });
+                var file = await picker.PickSaveFileAsync();
+                if (file == null)
+                {
+                    return;
+                }
+                var json = JsonConvert.SerializeObject(backup, Formatting.Indented);
+                await FileIO.WriteTextAsync(file, json);
+                Utils.ShowMessageToast("设置已备份");
+            }
+            catch (Exception ex)
+            {
+                Utils.ShowMessageToast($"备份失败：{ex.Message}");
+            }
+        }
+
+        private async void BtnSettingsImport_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var picker = new FileOpenPicker
+                {
+                    SuggestedStartLocation = PickerLocationId.DocumentsLibrary
+                };
+                picker.FileTypeFilter.Add(".json");
+                var file = await picker.PickSingleFileAsync();
+                if (file == null)
+                {
+                    return;
+                }
+                var content = await FileIO.ReadTextAsync(file);
+                var backup = JsonConvert.DeserializeObject<SettingsBackupData>(content);
+                if (backup == null)
+                {
+                    Utils.ShowMessageToast("设置文件为空");
+                    return;
+                }
+                await ApplySettingsBackupAsync(backup);
+                Utils.ShowMessageToast("设置已还原");
+            }
+            catch (Exception ex)
+            {
+                Utils.ShowMessageToast($"还原失败：{ex.Message}");
+            }
         }
 
         private static void ApplyDouyuSignServiceSetting(string value, bool enabled)

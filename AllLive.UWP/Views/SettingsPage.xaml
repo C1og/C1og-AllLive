@@ -12,6 +12,24 @@
         <ScrollViewer>
             <Grid Margin="12" HorizontalAlignment="Stretch">
                 <StackPanel MaxWidth="800" HorizontalAlignment="Stretch">
+                    <Grid Margin="0,0,0,12" HorizontalAlignment="Stretch">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel
+                            Grid.Column="1"
+                            HorizontalAlignment="Right"
+                            Orientation="Horizontal">
+                            <Button
+                                x:Name="BtnSettingsExport"
+                                Margin="0,0,8,0"
+                                Click="BtnSettingsExport_Click">
+                                备份
+                            </Button>
+                            <Button x:Name="BtnSettingsImport" Click="BtnSettingsImport_Click">还原</Button>
+                        </StackPanel>
+                    </Grid>
                     <TextBlock Margin="4,0,0,12" FontSize="18">常规</TextBlock>
 
                     <Grid
