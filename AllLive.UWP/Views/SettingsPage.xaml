@@ -358,7 +358,7 @@
                         CornerRadius="4">
                         <StackPanel VerticalAlignment="Center">
                             <TextBlock>弹幕</TextBlock>
-                            <TextBlock FontSize="12" Foreground="Gray">默认开启弹幕</TextBlock>
+                            <TextBlock FontSize="12" Foreground="Gray">默认关闭弹幕</TextBlock>
                         </StackPanel>
                         <ToggleSwitch
                             x:Name="DanmuSettingState"

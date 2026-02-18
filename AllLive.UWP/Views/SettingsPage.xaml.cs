@@ -126,7 +126,7 @@ namespace AllLive.UWP.Views
             });
 
             //日志开关
-            swLogEnabled.IsOn = SettingHelper.GetValue<bool>(SettingHelper.LOG_ENABLED, true);
+            swLogEnabled.IsOn = SettingHelper.GetValue<bool>(SettingHelper.LOG_ENABLED, false);
             LogHelper.SetEnabled(swLogEnabled.IsOn);
             swLogEnabled.Toggled += new RoutedEventHandler((sender, e) =>
             {
@@ -233,7 +233,7 @@ namespace AllLive.UWP.Views
                 });
             });
             //弹幕开关
-            var state = SettingHelper.GetValue<bool>(SettingHelper.LiveDanmaku.SHOW, true);
+            var state = SettingHelper.GetValue<bool>(SettingHelper.LiveDanmaku.SHOW, false);
             DanmuSettingState.IsOn = state;
             DanmuSettingState.Toggled += new RoutedEventHandler((e, args) =>
             {

@@ -39,7 +39,7 @@ namespace AllLive.UWP
             this.InitializeComponent();
             ApplyDouyuSignServiceSetting();
             ApplyDouyinSignServiceSetting();
-            LogHelper.SetEnabled(SettingHelper.GetValue<bool>(SettingHelper.LOG_ENABLED, true));
+            LogHelper.SetEnabled(SettingHelper.GetValue<bool>(SettingHelper.LOG_ENABLED, false));
             AllLive.Core.Helper.CoreDebug.Logger = message => LogHelper.Log(message, LogType.DEBUG);
             if (Utils.IsXbox && SettingHelper.GetValue<int>(SettingHelper.XBOX_MODE, 0) == 0)
             {

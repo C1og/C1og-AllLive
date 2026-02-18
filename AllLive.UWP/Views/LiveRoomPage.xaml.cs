@@ -1545,7 +1545,7 @@ namespace AllLive.UWP.Views
                 });
             });
             //弹幕开关
-            var state = SettingHelper.GetValue<bool>(SettingHelper.LiveDanmaku.SHOW, true) ? Visibility.Visible : Visibility.Collapsed;
+            var state = SettingHelper.GetValue<bool>(SettingHelper.LiveDanmaku.SHOW, false) ? Visibility.Visible : Visibility.Collapsed;
             DanmuControl.Visibility = state;
             PlaySWDanmu.IsOn = state == Visibility.Visible;
             PlaySWDanmu.Toggled += new RoutedEventHandler((e, args) =>
@@ -1682,7 +1682,7 @@ namespace AllLive.UWP.Views
             });
 
             //弹幕开关
-            var state = SettingHelper.GetValue<bool>(SettingHelper.LiveDanmaku.SHOW, true) ? Visibility.Visible : Visibility.Collapsed;
+            var state = SettingHelper.GetValue<bool>(SettingHelper.LiveDanmaku.SHOW, false) ? Visibility.Visible : Visibility.Collapsed;
 
             PlaySWDanmu.IsOn = state == Visibility.Visible;
             PlaySWDanmu.Toggled += new RoutedEventHandler((e, args) =>
@@ -2082,7 +2082,7 @@ namespace AllLive.UWP.Views
                 DanmuControl.DanmakuSizeZoom = SettingHelper.GetValue<double>(SettingHelper.LiveDanmaku.FONT_ZOOM, 1);
                 DanmuControl.DanmakuDuration = SettingHelper.GetValue<int>(SettingHelper.LiveDanmaku.SPEED, 10);
                 DanmuControl.ClearAll();
-                DanmuControl.Visibility = SettingHelper.GetValue<bool>(SettingHelper.LiveDanmaku.SHOW, true) ? Visibility.Visible : Visibility.Collapsed;
+                DanmuControl.Visibility = SettingHelper.GetValue<bool>(SettingHelper.LiveDanmaku.SHOW, false) ? Visibility.Visible : Visibility.Collapsed;
             }
 
         }
