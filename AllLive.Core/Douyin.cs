@@ -59,21 +59,32 @@ namespace AllLive.Core
             List<LiveCategory> categories = new List<LiveCategory>();
             var resp = await HttpUtil.GetString("https://live.douyin.com/", await GetRequestHeaders());
 
-            Regex regex = new Regex("\\{\\\\\"pathname\\\\\":\\\\\"\\/\\\\\",\\\\\"categoryData.*?\\]\\\\n", RegexOptions.Singleline);
-            Match match = regex.Match(resp);
-            string renderData = match.Success ? match.Groups[0].Value : "";
+            var renderData = ExtractCategoryRenderData(resp);
             if (string.IsNullOrEmpty(renderData))
             {
                 throw new Exception("无法读取分类数据");
             }
-            renderData = renderData.Trim().Replace("\\\"", "\"").Replace("\\\\", "\\").Replace("]\\n", "");
-            // 解析JSON数据
-            var renderDataJson = JObject.Parse(renderData);
-            foreach (var item in renderDataJson["categoryData"])
+            JObject renderDataJson;
+            try
+            {
+                renderDataJson = JObject.Parse(renderData);
+            }
+            catch (Exception ex)
+            {
+                CoreDebug.Log($"[Douyin] 分类数据解析失败: {ex.GetType().FullName}: {ex.Message}");
+                throw;
+            }
+            var categoryData = renderDataJson["categoryData"] as JArray;
+            if (categoryData == null)
+            {
+                throw new Exception("无法读取分类数据");
+            }
+            foreach (var item in categoryData)
             {
                 List<LiveSubCategory> subs = new List<LiveSubCategory>();
                 var id = $"{item["partition"]["id_str"]},{item["partition"]["type"]}";
-                foreach (var subItem in item["sub_partition"])
+                var subPartitions = item["sub_partition"] as JArray ?? new JArray();
+                foreach (var subItem in subPartitions)
                 {
                     var subCategory = new LiveSubCategory()
                     {
@@ -94,6 +105,52 @@ namespace AllLive.Core
                 categories.Add(category);
             }
             return categories;
+        }
+
+        private static string ExtractCategoryRenderData(string html)
+        {
+            if (string.IsNullOrEmpty(html))
+            {
+                return null;
+            }
+            const string token = "{\\\"pathname\\\":\\\"/\\\",\\\"categoryData\\\"";
+            var start = html.IndexOf(token, StringComparison.Ordinal);
+            if (start < 0)
+            {
+                return null;
+            }
+            int depth = 0;
+            int end = -1;
+            for (int i = start; i < html.Length; i++)
+            {
+                var c = html[i];
+                if (c == '{')
+                {
+                    depth++;
+                }
+                else if (c == '}')
+                {
+                    depth--;
+                    if (depth == 0)
+                    {
+                        end = i;
+                        break;
+                    }
+                }
+            }
+            if (end < 0)
+            {
+                return null;
+            }
+            var raw = html.Substring(start, end - start + 1);
+            try
+            {
+                return Regex.Unescape(raw);
+            }
+            catch
+            {
+                return raw.Replace("\\\"", "\"").Replace("\\\\", "\\");
+            }
         }
 
         public async Task<LiveCategoryResult> GetCategoryRooms(LiveSubCategory category, int page = 1)
