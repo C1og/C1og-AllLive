@@ -16,8 +16,20 @@
             <RowDefinition />
         </Grid.RowDefinitions>
         <Grid Padding="16,8">
-            <TextBlock FontSize="24">我的关注</TextBlock>
-            <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock FontSize="24">我的关注</TextBlock>
+                <ToggleSwitch
+                    Margin="16,0,0,0"
+                    VerticalAlignment="Center"
+                    IsOn="{x:Bind Path=favoriteVM.HideOffline, Mode=TwoWay}"
+                    OffContent="显示全部"
+                    OnContent="隐藏未开播" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" HorizontalAlignment="Right" Orientation="Horizontal">
                 <Button Command="{x:Bind Path=favoriteVM.RefreshCommand}" Visibility="{x:Bind Path=favoriteVM.LoaddingLiveStatus, Mode=OneWay, Converter={StaticResource displayConvert}}">
                     <StackPanel Orientation="Horizontal">
                         <FontIcon
@@ -48,7 +60,7 @@
                 IsItemClickEnabled="True"
                 ItemClick="ls_ItemClick"
                 ItemHeight="72"
-                ItemsSource="{x:Bind Path=favoriteVM.Items, Mode=OneWay}"
+                ItemsSource="{x:Bind Path=favoriteVM.DisplayItems, Mode=OneWay}"
                 SelectionMode="None"
                 StretchContentForSingleRow="False">
                 <controls:MyAdaptiveGridView.ItemContainerStyle>
@@ -71,6 +83,10 @@
                                         Click="MenuFlyoutItem_Click"
                                         Icon="Delete"
                                         Text="移除" />
+                                    <MenuFlyoutItem
+                                        Click="MenuFlyoutItem_Sort_Click"
+                                        Icon="Sort"
+                                        Text="排序" />
                                 </MenuFlyout>
                             </Grid.ContextFlyout>
                             <Grid.ColumnDefinitions>

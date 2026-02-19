@@ -19,6 +19,8 @@ namespace AllLive.UWP.ViewModels
         public FavoriteVM()
         {
             Items = new ObservableCollection<FavoriteItem>();
+            DisplayItems = new ObservableCollection<FavoriteItem>();
+            _hideOffline = SettingHelper.GetValue<bool>(SettingHelper.FAVORITE_HIDE_OFFLINE, false);
             InputCommand = new RelayCommand(Input);
             OutputCommand = new RelayCommand(Output);
             TipCommand = new RelayCommand(Tip);
@@ -36,6 +38,29 @@ namespace AllLive.UWP.ViewModels
             set { _items = value; DoPropertyChanged("Items"); }
         }
 
+        private ObservableCollection<FavoriteItem> _displayItems;
+        public ObservableCollection<FavoriteItem> DisplayItems
+        {
+            get { return _displayItems; }
+            set { _displayItems = value; DoPropertyChanged("DisplayItems"); }
+        }
+
+        private bool _hideOffline = false;
+        public bool HideOffline
+        {
+            get { return _hideOffline; }
+            set
+            {
+                if (_hideOffline == value)
+                {
+                    return;
+                }
+                _hideOffline = value;
+                SettingHelper.SetValue(SettingHelper.FAVORITE_HIDE_OFFLINE, value);
+                DoPropertyChanged("HideOffline");
+                ApplySortAndFilter();
+            }
+        }
 
         private bool _loadingLiveStatus;
 
@@ -56,8 +81,8 @@ namespace AllLive.UWP.ViewModels
                 {
                     Items.Add(item);
                 }
-                IsEmpty = Items.Count == 0;
-                if (!IsEmpty)
+                ApplySortAndFilter();
+                if (Items.Count > 0)
                 {
                     LoadLiveStatus();
                 }
@@ -74,6 +99,12 @@ namespace AllLive.UWP.ViewModels
 
         public void LoadLiveStatus()
         {
+            if (Items.Count == 0)
+            {
+                LoaddingLiveStatus = false;
+                ApplySortAndFilter();
+                return;
+            }
             LoaddingLiveStatus = true;
             loadedCount = 0;
             foreach (var item in Items)
@@ -105,17 +136,30 @@ namespace AllLive.UWP.ViewModels
                 {
                     LoaddingLiveStatus = false;
                     loadedCount = 0;
-                    // 排序，直播的在前面
-                    Items = new ObservableCollection<FavoriteItem>(Items.OrderByDescending(x => x.LiveStatus));
+                    ApplySortAndFilter();
                 }
             }
         }
 
+        private void ApplySortAndFilter()
+        {
+            var list = Items
+                .OrderByDescending(x => x.SortOrder)
+                .ThenByDescending(x => x.LiveStatus)
+                .ToList();
+            if (HideOffline)
+            {
+                list = list.Where(x => x.LiveStatus).ToList();
+            }
+            DisplayItems = new ObservableCollection<FavoriteItem>(list);
+            IsEmpty = DisplayItems.Count == 0;
+        }
 
         public override void Refresh()
         {
             base.Refresh();
             Items.Clear();
+            DisplayItems.Clear();
             LoadData();
         }
 
@@ -125,7 +169,7 @@ namespace AllLive.UWP.ViewModels
             {
                 DatabaseHelper.DeleteFavorite(item.ID);
                 Items.Remove(item);
-                IsEmpty = Items.Count == 0;
+                ApplySortAndFilter();
             }
             catch (Exception ex)
             {
@@ -153,14 +197,21 @@ namespace AllLive.UWP.ViewModels
                     var items = Newtonsoft.Json.JsonConvert.DeserializeObject<List<FavoriteJsonItem>>(json);
                     foreach (var item in items)
                     {
-
-                        DatabaseHelper.AddFavorite(new FavoriteItem()
+                        var favoriteItem = new FavoriteItem()
                         {
                             SiteName = item.SiteName,
                             RoomID = item.RoomId,
                             UserName = item.UserName,
                             Photo = item.Face,
-                        });
+                            SortOrder = item.Sort
+                        };
+                        var existId = DatabaseHelper.CheckFavorite(favoriteItem.RoomID, favoriteItem.SiteName);
+                        if (existId != null)
+                        {
+                            DatabaseHelper.UpdateFavoriteSort(existId.Value, favoriteItem.SortOrder);
+                            continue;
+                        }
+                        DatabaseHelper.AddFavorite(favoriteItem);
                     }
                     Utils.ShowMessageToast("导入成功");
                     Refresh();
@@ -213,7 +264,8 @@ namespace AllLive.UWP.ViewModels
                             RoomId = item.RoomID,
                             UserName = item.UserName,
                             Face = item.Photo,
-                            AddTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.M")
+                            AddTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.M"),
+                            Sort = item.SortOrder
                         });
                     }
                     var json = Newtonsoft.Json.JsonConvert.SerializeObject(items);
@@ -234,6 +286,20 @@ namespace AllLive.UWP.ViewModels
         {
             MessageDialog dialog = new MessageDialog(@"该程序兼容Simple Live，您可以导入Simple Live的关注数据，导出的数据也可以在Simple Live中导入。", "导入导出说明");
            _= dialog.ShowAsync();
+        }
+
+        public void UpdateSort(FavoriteItem item, int sortOrder)
+        {
+            try
+            {
+                item.SortOrder = sortOrder;
+                DatabaseHelper.UpdateFavoriteSort(item.ID, sortOrder);
+                ApplySortAndFilter();
+            }
+            catch (Exception ex)
+            {
+                HandleError(ex);
+            }
         }
     }
 
@@ -256,6 +322,9 @@ namespace AllLive.UWP.ViewModels
 
         [JsonProperty("addTime")]
         public string AddTime;
+
+        [JsonProperty("sort")]
+        public int Sort;
 
         [JsonIgnore]
         public string SiteName

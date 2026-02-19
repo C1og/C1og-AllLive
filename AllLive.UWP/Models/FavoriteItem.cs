@@ -15,6 +15,12 @@ namespace AllLive.UWP.Models
         public string Photo { get; set; }
         public string SiteName { get; set; }
 
+        private int _sortOrder = 0;
+        public int SortOrder
+        {
+            get { return _sortOrder; }
+            set { _sortOrder = value; DoPropertyChanged("SortOrder"); }
+        }
 
         private bool _LiveStatus=false;
         public bool LiveStatus

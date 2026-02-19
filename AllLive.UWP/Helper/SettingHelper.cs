@@ -52,6 +52,10 @@ namespace AllLive.UWP.Helper
         /// 关注列表自动刷新间隔（分钟）
         /// </summary>
         public const string FAVORITE_AUTO_REFRESH_MINUTES = "FavoriteAutoRefreshMinutes";
+        /// <summary>
+        /// 关注列表隐藏未开播
+        /// </summary>
+        public const string FAVORITE_HIDE_OFFLINE = "FavoriteHideOffline";
 
         /// <summary>
         /// 视频解码

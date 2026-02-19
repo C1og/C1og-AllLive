@@ -25,7 +25,8 @@ id INTEGER PRIMARY KEY AUTOINCREMENT,
 user_name TEXT,
 site_name TEXT,
 photo TEXT,
-room_id TEXT);
+room_id TEXT,
+sort_order INTEGER DEFAULT 0);
 
 CREATE TABLE IF NOT EXISTS History (
 id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -37,8 +38,38 @@ watch_time DATETIME);
 ";
             SqliteCommand createTable = new SqliteCommand(tableCommand, db);
             createTable.ExecuteReader();
+            EnsureFavoriteSortOrderColumn();
 
+        }
 
+        private static void EnsureFavoriteSortOrderColumn()
+        {
+            try
+            {
+                using (var command = new SqliteCommand("PRAGMA table_info(Favorite);", db))
+                using (var reader = command.ExecuteReader())
+                {
+                    bool hasSort = false;
+                    while (reader.Read())
+                    {
+                        var name = reader.GetString(1);
+                        if (string.Equals(name, "sort_order", StringComparison.OrdinalIgnoreCase))
+                        {
+                            hasSort = true;
+                            break;
+                        }
+                    }
+                    if (!hasSort)
+                    {
+                        var alter = new SqliteCommand("ALTER TABLE Favorite ADD COLUMN sort_order INTEGER DEFAULT 0;", db);
+                        alter.ExecuteNonQuery();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogHelper.Log("初始化关注排序字段失败", LogType.ERROR, ex);
+            }
         }
 
 
@@ -47,12 +78,22 @@ watch_time DATETIME);
             if (CheckFavorite(item.RoomID, item.SiteName)!=null) { return; }
             SqliteCommand command = new SqliteCommand();
             command.Connection = db;
-            command.CommandText = "INSERT INTO Favorite VALUES (NULL,@user_name,@site_name, @photo, @room_id);";
+            command.CommandText = "INSERT INTO Favorite VALUES (NULL,@user_name,@site_name, @photo, @room_id, @sort_order);";
             command.Parameters.AddWithValue("@user_name", item.UserName);
             command.Parameters.AddWithValue("@site_name", item.SiteName);
             command.Parameters.AddWithValue("@photo", item.Photo);
             command.Parameters.AddWithValue("@room_id", item.RoomID);
+            command.Parameters.AddWithValue("@sort_order", item.SortOrder);
             command.ExecuteReader();
+        }
+        public static void UpdateFavoriteSort(long id, int sortOrder)
+        {
+            SqliteCommand command = new SqliteCommand();
+            command.Connection = db;
+            command.CommandText = "UPDATE Favorite SET sort_order=@sort_order WHERE id=@id";
+            command.Parameters.AddWithValue("@sort_order", sortOrder);
+            command.Parameters.AddWithValue("@id", id);
+            command.ExecuteNonQuery();
         }
         public static long? CheckFavorite(string roomId, string siteName)
         {
@@ -100,7 +141,8 @@ watch_time DATETIME);
                     RoomID = reader.GetString(4),
                     Photo = reader.GetString(3),
                     SiteName = reader.GetString(2),
-                    UserName = reader.GetString(1)
+                    UserName = reader.GetString(1),
+                    SortOrder = reader.FieldCount > 5 && !reader.IsDBNull(5) ? reader.GetInt32(5) : 0
                 });
             }
             return favoriteItems;

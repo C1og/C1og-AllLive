@@ -75,6 +75,39 @@ namespace AllLive.UWP.Views
             favoriteVM.RemoveItem(item);
         }
 
+        private async void MenuFlyoutItem_Sort_Click(object sender, RoutedEventArgs e)
+        {
+            var item = (sender as MenuFlyoutItem).DataContext as FavoriteItem;
+            if (item == null)
+            {
+                return;
+            }
+            ContentDialog dialog = new ContentDialog();
+            dialog.Title = "排序";
+            TextBox textBox = new TextBox();
+            textBox.PlaceholderText = "请输入排序数字";
+            textBox.Text = item.SortOrder.ToString();
+            textBox.InputScope = new InputScope
+            {
+                Names = { new InputScopeName(InputScopeNameValue.Number) }
+            };
+            dialog.Content = textBox;
+            dialog.PrimaryButtonText = "确定";
+            dialog.SecondaryButtonText = "取消";
+            dialog.PrimaryButtonClick += (s, a) =>
+            {
+                a.Cancel = true;
+                if (!int.TryParse(textBox.Text, out int sortValue))
+                {
+                    Utils.ShowMessageToast("请输入有效数字");
+                    return;
+                }
+                dialog.Hide();
+                favoriteVM.UpdateSort(item, sortValue);
+            };
+            await dialog.ShowAsync();
+        }
+
         private void StartAutoRefreshTimer()
         {
             autoRefreshMinutes = GetAutoRefreshMinutes();
