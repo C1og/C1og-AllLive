@@ -592,10 +592,23 @@ namespace AllLive.UWP.ViewModels
             newList.AddRange(ordered);
             AvailableCodecs = newList;
 
-            if (string.IsNullOrWhiteSpace(SelectedCodec) ||
-                newList.FirstOrDefault(x => string.Equals(x, SelectedCodec, StringComparison.OrdinalIgnoreCase)) == null)
+            var hasSelected = !string.IsNullOrWhiteSpace(SelectedCodec)
+                && newList.FirstOrDefault(x => string.Equals(x, SelectedCodec, StringComparison.OrdinalIgnoreCase)) != null;
+
+            if (!hasSelected || string.Equals(SelectedCodec, "全部", StringComparison.OrdinalIgnoreCase))
             {
-                SelectedCodec = newList[0];
+                if (newList.Any(x => string.Equals(x, "HEVC", StringComparison.OrdinalIgnoreCase)))
+                {
+                    SelectedCodec = "HEVC";
+                    return;
+                }
+                if (newList.Any(x => string.Equals(x, "AVC", StringComparison.OrdinalIgnoreCase)))
+                {
+                    SelectedCodec = "AVC";
+                    return;
+                }
+                var fallback = newList.FirstOrDefault(x => !string.Equals(x, "全部", StringComparison.OrdinalIgnoreCase));
+                SelectedCodec = fallback ?? "全部";
                 return;
             }
 
