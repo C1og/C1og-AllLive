@@ -149,6 +149,7 @@ namespace AllLive.UWP.ViewModels
         }
 
         private List<PlayurlLine> lines;
+        private List<PlayurlLine> allLines;
         public List<PlayurlLine> Lines
         {
             get { return lines; }
@@ -171,6 +172,29 @@ namespace AllLive.UWP.ViewModels
                 ChangedPlayUrl?.Invoke(this, value.Url);
             }
 
+        }
+
+        private List<string> availableCodecs = new List<string>() { "全部" };
+        public List<string> AvailableCodecs
+        {
+            get { return availableCodecs; }
+            set { availableCodecs = value; DoPropertyChanged("AvailableCodecs"); }
+        }
+
+        private string selectedCodec = "全部";
+        public string SelectedCodec
+        {
+            get { return selectedCodec; }
+            set
+            {
+                if (value == selectedCodec)
+                {
+                    return;
+                }
+                selectedCodec = value;
+                DoPropertyChanged("SelectedCodec");
+                ApplyCodecFilter();
+            }
         }
 
         public ObservableCollection<LiveMessage> Messages { get; set; }
@@ -413,12 +437,13 @@ namespace AllLive.UWP.ViewModels
                     ls.Add(new PlayurlLine()
                     {
                         Name = $"线路{i + 1}",
-                        Url = data[i]
+                        Url = data[i],
+                        Codec = DetectCodecLabel(data[i])
                     });
                 }
 
-                Lines = ls;
-                CurrentLine = Lines[0];
+                allLines = ls;
+                UpdateAvailableCodecs();
             }
             catch (Exception ex)
             {
@@ -522,6 +547,136 @@ namespace AllLive.UWP.ViewModels
             {
                 return $"线路{index}: 解析失败 {ex.GetType().FullName} {ex.Message}";
             }
+        }
+
+        private void UpdateAvailableCodecs()
+        {
+            var codecs = new List<string>();
+            if (allLines != null)
+            {
+                foreach (var line in allLines)
+                {
+                    if (string.IsNullOrWhiteSpace(line?.Codec))
+                    {
+                        continue;
+                    }
+                    if (codecs.FirstOrDefault(x => string.Equals(x, line.Codec, StringComparison.OrdinalIgnoreCase)) == null)
+                    {
+                        codecs.Add(line.Codec);
+                    }
+                }
+            }
+
+            var ordered = new List<string>();
+            if (codecs.Any(x => string.Equals(x, "AVC", StringComparison.OrdinalIgnoreCase)))
+            {
+                ordered.Add("AVC");
+            }
+            if (codecs.Any(x => string.Equals(x, "HEVC", StringComparison.OrdinalIgnoreCase)))
+            {
+                ordered.Add("HEVC");
+            }
+            if (codecs.Any(x => string.Equals(x, "AV1", StringComparison.OrdinalIgnoreCase)))
+            {
+                ordered.Add("AV1");
+            }
+            foreach (var codec in codecs)
+            {
+                if (ordered.FirstOrDefault(x => string.Equals(x, codec, StringComparison.OrdinalIgnoreCase)) == null)
+                {
+                    ordered.Add(codec);
+                }
+            }
+
+            var newList = new List<string>() { "全部" };
+            newList.AddRange(ordered);
+            AvailableCodecs = newList;
+
+            if (string.IsNullOrWhiteSpace(SelectedCodec) ||
+                newList.FirstOrDefault(x => string.Equals(x, SelectedCodec, StringComparison.OrdinalIgnoreCase)) == null)
+            {
+                SelectedCodec = newList[0];
+                return;
+            }
+
+            ApplyCodecFilter();
+        }
+
+        private void ApplyCodecFilter()
+        {
+            if (allLines == null)
+            {
+                Lines = null;
+                return;
+            }
+
+            IEnumerable<PlayurlLine> filtered = allLines;
+            if (!string.IsNullOrWhiteSpace(SelectedCodec) && !string.Equals(SelectedCodec, "全部", StringComparison.OrdinalIgnoreCase))
+            {
+                filtered = filtered.Where(x => string.Equals(x?.Codec, SelectedCodec, StringComparison.OrdinalIgnoreCase));
+            }
+            var newLines = filtered.ToList();
+            Lines = newLines;
+
+            if (newLines.Count == 0)
+            {
+                return;
+            }
+            if (CurrentLine == null || !newLines.Contains(CurrentLine))
+            {
+                CurrentLine = newLines[0];
+            }
+        }
+
+        private static string DetectCodecLabel(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                return null;
+            }
+
+            if (url.IndexOf("prohevc", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return "HEVC";
+            }
+            if (url.IndexOf("proav1", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return "AV1";
+            }
+
+            try
+            {
+                if (Uri.TryCreate(url, UriKind.Absolute, out var uri) && !string.IsNullOrEmpty(uri.Query))
+                {
+                    var decoder = new WwwFormUrlDecoder(uri.Query);
+                    foreach (var item in decoder)
+                    {
+                        if (!string.Equals(item.Name, "codec", StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+                        switch (item.Value?.Trim())
+                        {
+                            case "0":
+                                return "AVC";
+                            case "1":
+                                return "HEVC";
+                            case "2":
+                                return "AV1";
+                        }
+                    }
+                }
+            }
+            catch
+            {
+            }
+
+            if (url.IndexOf(".flv", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return "AVC";
+            }
+
+            return null;
         }
 
         private static bool TryParseUnixSeconds(string value, out DateTimeOffset dt)
@@ -652,6 +807,7 @@ namespace AllLive.UWP.ViewModels
     {
         public string Name { get; set; }
         public string Url { get; set; }
+        public string Codec { get; set; }
     }
     public class SettingsItem<T>
     {

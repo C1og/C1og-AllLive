@@ -207,6 +207,26 @@
                                     BorderThickness="1"
                                     CornerRadius="4">
                                     <StackPanel VerticalAlignment="Center">
+                                        <TextBlock>编码</TextBlock>
+                                    </StackPanel>
+                                    <ComboBox
+                                        x:Name="xboxSettingsCodec"
+                                        MinWidth="80"
+                                        HorizontalAlignment="Right"
+                                        VerticalAlignment="Center"
+                                        HorizontalContentAlignment="Center"
+                                        ItemsSource="{x:Bind Path=liveRoomVM.AvailableCodecs, Mode=OneWay}"
+                                        SelectedItem="{x:Bind Path=liveRoomVM.SelectedCodec, Mode=TwoWay}"
+                                        ToolTipService.ToolTip="编码" />
+                                </Grid>
+                                <Grid
+                                    Margin="0,8,0,0"
+                                    Padding="8,4"
+                                    Background="{ThemeResource LayerFillColorDefaultBrush}"
+                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="4">
+                                    <StackPanel VerticalAlignment="Center">
                                         <TextBlock>解码器</TextBlock>
                                     </StackPanel>
                                     <ComboBox
@@ -642,6 +662,19 @@
                                         ItemsSource="{x:Bind Path=liveRoomVM.Lines, Mode=OneWay}"
                                         SelectedItem="{x:Bind Path=liveRoomVM.CurrentLine, Mode=TwoWay}"
                                         ToolTipService.ToolTip="线路" />
+                                    <ComboBox
+                                        x:Name="PlayCodec"
+                                        MinWidth="70"
+                                        Margin="8,0,0,0"
+                                        VerticalAlignment="Center"
+                                        HorizontalContentAlignment="Center"
+                                        Background="Transparent"
+                                        BorderThickness="0"
+                                        FontSize="16"
+                                        Foreground="White"
+                                        ItemsSource="{x:Bind Path=liveRoomVM.AvailableCodecs, Mode=OneWay}"
+                                        SelectedItem="{x:Bind Path=liveRoomVM.SelectedCodec, Mode=TwoWay}"
+                                        ToolTipService.ToolTip="编码" />
                                     <Button
                                         x:Name="PlayBtnMinWindow"
                                         Width="48"
