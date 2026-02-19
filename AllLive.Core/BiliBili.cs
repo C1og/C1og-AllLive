@@ -318,8 +318,7 @@ namespace AllLive.Core
                 }
             }
 
-            // 对链接进行排序，包含mcdn的在后
-            urls = urls.OrderBy(x => x.Contains("mcdn")).ToList();
+            urls = OrderBilibiliPlayUrls(urls);
 
             return urls;
         }
@@ -338,7 +337,65 @@ namespace AllLive.Core
             {
                 urls.Add(item["url"].ToString());
             }
-            return urls;
+            return OrderBilibiliPlayUrls(urls);
+        }
+
+        private static List<string> OrderBilibiliPlayUrls(List<string> urls)
+        {
+            if (urls == null || urls.Count == 0)
+            {
+                return urls ?? new List<string>();
+            }
+
+            return urls
+                .Select((url, index) => new { url, index, score = GetBilibiliUrlScore(url) })
+                .OrderByDescending(x => x.score)
+                .ThenBy(x => x.index)
+                .Select(x => x.url)
+                .ToList();
+        }
+
+        private static int GetBilibiliUrlScore(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                return int.MinValue;
+            }
+
+            var score = 0;
+            var host = string.Empty;
+            var lower = url.ToLowerInvariant();
+
+            if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            {
+                host = uri.Host ?? string.Empty;
+            }
+
+            if (lower.Contains(".flv"))
+            {
+                score += 2000;
+            }
+            else if (lower.Contains(".m3u8"))
+            {
+                score += 1000;
+            }
+
+            if (!string.IsNullOrEmpty(host) && host.IndexOf("d1--cn", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                score += 300;
+            }
+
+            if (!string.IsNullOrEmpty(host) && host.IndexOf("mcdn", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                score -= 200;
+            }
+
+            if (lower.StartsWith("https://"))
+            {
+                score += 10;
+            }
+
+            return score;
         }
 
         public async Task<bool> GetLiveStatus(object roomId)
