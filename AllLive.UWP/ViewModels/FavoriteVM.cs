@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Threading;
 using System.Collections.ObjectModel;
 using System.Windows.Input;
 using Windows.Storage.Pickers;
@@ -70,22 +71,42 @@ namespace AllLive.UWP.ViewModels
             set { _loadingLiveStatus = value; DoPropertyChanged("LoaddingLiveStatus"); }
         }
 
-
+        private int _refreshVersion = 0;
+        private const int LiveStatusParallelism = 6;
+        private readonly SemaphoreSlim _liveStatusSemaphore = new SemaphoreSlim(LiveStatusParallelism, LiveStatusParallelism);
 
         public async void LoadData()
         {
+            await ReloadAsync(deferUiUpdate: false);
+        }
+
+        private async Task ReloadAsync(bool deferUiUpdate)
+        {
+            var version = Interlocked.Increment(ref _refreshVersion);
             try
             {
                 Loading = true;
-                foreach (var item in await DatabaseHelper.GetFavorites())
+                var list = await DatabaseHelper.GetFavorites();
+                if (version != _refreshVersion)
                 {
-                    Items.Add(item);
+                    return;
                 }
-                ApplySortAndFilter();
-                if (Items.Count > 0)
+                if (list.Count == 0)
                 {
-                    LoadLiveStatus();
+                    ApplySortAndFilter(list);
+                    return;
                 }
+                if (!deferUiUpdate)
+                {
+                    ApplySortAndFilter(list);
+                }
+                LoaddingLiveStatus = true;
+                await UpdateLiveStatusAsync(list, version);
+                if (version != _refreshVersion)
+                {
+                    return;
+                }
+                ApplySortAndFilter(list);
             }
             catch (Exception ex)
             {
@@ -93,31 +114,37 @@ namespace AllLive.UWP.ViewModels
             }
             finally
             {
-                Loading = false;
+                if (version == _refreshVersion)
+                {
+                    Loading = false;
+                    LoaddingLiveStatus = false;
+                }
             }
         }
 
-        public void LoadLiveStatus()
+        private async Task UpdateLiveStatusAsync(IList<FavoriteItem> items, int refreshVersion)
         {
-            if (Items.Count == 0)
+            var tasks = new List<Task>(items.Count);
+            foreach (var item in items)
             {
-                LoaddingLiveStatus = false;
-                ApplySortAndFilter();
+                tasks.Add(UpdateLiveStatusAsync(item, refreshVersion));
+            }
+            await Task.WhenAll(tasks);
+        }
+
+        private async Task UpdateLiveStatusAsync(FavoriteItem item, int refreshVersion)
+        {
+            if (refreshVersion != _refreshVersion)
+            {
                 return;
             }
-            LoaddingLiveStatus = true;
-            loadedCount = 0;
-            foreach (var item in Items)
-            {
-                LoadLiveStatus(item);
-            }
-        }
-
-        int loadedCount = 0;
-        public async void LoadLiveStatus(FavoriteItem item)
-        {
+            await _liveStatusSemaphore.WaitAsync();
             try
             {
+                if (refreshVersion != _refreshVersion)
+                {
+                    return;
+                }
                 var site = MainVM.Sites.FirstOrDefault(x => x.Name == item.SiteName);
                 if (site != null)
                 {
@@ -131,19 +158,18 @@ namespace AllLive.UWP.ViewModels
             }
             finally
             {
-                loadedCount++;
-                if (loadedCount == Items.Count)
-                {
-                    LoaddingLiveStatus = false;
-                    loadedCount = 0;
-                    ApplySortAndFilter();
-                }
+                _liveStatusSemaphore.Release();
             }
         }
 
-        private void ApplySortAndFilter()
+        private void ApplySortAndFilter(IList<FavoriteItem> source = null)
         {
-            var list = Items
+            var baseList = source ?? Items?.ToList() ?? new List<FavoriteItem>();
+            if (source != null)
+            {
+                Items = new ObservableCollection<FavoriteItem>(baseList);
+            }
+            var list = baseList
                 .OrderByDescending(x => x.SortOrder)
                 .ThenByDescending(x => x.LiveStatus)
                 .ToList();
@@ -158,9 +184,7 @@ namespace AllLive.UWP.ViewModels
         public override void Refresh()
         {
             base.Refresh();
-            Items.Clear();
-            DisplayItems.Clear();
-            LoadData();
+            _ = ReloadAsync(deferUiUpdate: true);
         }
 
         public void RemoveItem(FavoriteItem item)
