@@ -148,7 +148,16 @@ namespace AllLive.UWP.Helper
 
         public static void UpdateFavorite()
         {
-            UpdateFavoriteEvent?.Invoke(null, new EventArgs());
+            var dispatcher = CoreApplication.MainView?.Dispatcher;
+            if (dispatcher != null && !dispatcher.HasThreadAccess)
+            {
+                _ = dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
+                {
+                    UpdateFavoriteEvent?.Invoke(null, EventArgs.Empty);
+                });
+                return;
+            }
+            UpdateFavoriteEvent?.Invoke(null, EventArgs.Empty);
         }
         public static void UpdatePanelDisplayMode()
         {
