@@ -5,6 +5,7 @@ using AllLive.UWP.Models;
 using AllLive.UWP.ViewModels;
 using AllLive.UWP.Views;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -20,6 +21,7 @@ namespace AllLive.UWP.Helper
 {
     public static class MessageCenter
     {
+        private static readonly ConcurrentDictionary<string, int> OpenLiveRoomWindows = new ConcurrentDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         public delegate void NavigatePageHandler(Type page, object data);
         public static event NavigatePageHandler NavigatePageEvent;
         public delegate void ChangeTitleHandler(string title, string logo);
@@ -99,6 +101,23 @@ namespace AllLive.UWP.Helper
         {
             if(SettingHelper.GetValue(SettingHelper.NEW_WINDOW_LIVEROOM, true)&& page == typeof(LiveRoomPage))
             {
+                var liveRoomKey = GetLiveRoomWindowKey(data);
+                if (!string.IsNullOrWhiteSpace(liveRoomKey)
+                    && OpenLiveRoomWindows.TryGetValue(liveRoomKey, out var existingViewId))
+                {
+                    var currentViewId = ApplicationView.GetForCurrentView().Id;
+                    if (existingViewId == currentViewId)
+                    {
+                        return;
+                    }
+                    var switched = await ApplicationViewSwitcher.TryShowAsStandaloneAsync(existingViewId);
+                    if (switched)
+                    {
+                        return;
+                    }
+                    OpenLiveRoomWindows.TryRemove(liveRoomKey, out _);
+                }
+
                 CoreApplicationView newView = CoreApplication.CreateNewView();
                 int newViewId = 0;
                 await newView.Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
@@ -109,6 +128,17 @@ namespace AllLive.UWP.Helper
                     Window.Current.Content = frame;
                     Window.Current.Activate();
                     newViewId = ApplicationView.GetForCurrentView().Id;
+                    if (!string.IsNullOrWhiteSpace(liveRoomKey))
+                    {
+                        OpenLiveRoomWindows[liveRoomKey] = newViewId;
+                        ApplicationView.GetForCurrentView().Consolidated += (sender, args) =>
+                        {
+                            if (OpenLiveRoomWindows.TryGetValue(liveRoomKey, out var viewId) && viewId == newViewId)
+                            {
+                                OpenLiveRoomWindows.TryRemove(liveRoomKey, out _);
+                            }
+                        };
+                    }
                     //ApplicationView.GetForCurrentView().Consolidated += (sender, args) =>
                     //{
                     //    frame.Navigate(typeof(BlankPage));
@@ -117,6 +147,10 @@ namespace AllLive.UWP.Helper
                     //};
                 });
                 bool viewShown = await ApplicationViewSwitcher.TryShowAsStandaloneAsync(newViewId);
+                if (!viewShown && !string.IsNullOrWhiteSpace(liveRoomKey))
+                {
+                    OpenLiveRoomWindows.TryRemove(liveRoomKey, out _);
+                }
             }
             else
             {
@@ -169,6 +203,19 @@ namespace AllLive.UWP.Helper
             await biliLoginDialog.ShowAsync();
             return BiliAccount.Instance.Logined;
 
+        }
+
+        private static string GetLiveRoomWindowKey(object data)
+        {
+            var pageArgs = data as PageArgs;
+            var room = pageArgs?.Data as LiveRoomItem;
+            var siteName = pageArgs?.Site?.Name?.Trim();
+            var roomId = room?.RoomID?.Trim();
+            if (string.IsNullOrWhiteSpace(siteName) || string.IsNullOrWhiteSpace(roomId))
+            {
+                return null;
+            }
+            return $"{siteName}|{roomId}";
         }
     }
     class BlankPage : Page { }
