@@ -55,6 +55,23 @@ namespace AllLive.UWP.Helper
 
         }
 
+        public void ApplyLoginState(string cookie, long userId = 0L, string userName = "")
+        {
+            var normalizedCookie = cookie?.Trim() ?? "";
+            if (string.IsNullOrEmpty(normalizedCookie))
+            {
+                Logout();
+                return;
+            }
+
+            SettingHelper.SetValue(SettingHelper.BILI_COOKIE, normalizedCookie);
+            SettingHelper.SetValue(SettingHelper.BILI_USER_ID, userId > 0 ? userId : 0L);
+            UserName = string.IsNullOrWhiteSpace(userName) ? "" : userName.Trim();
+            Logined = true;
+            SetBiliSiteCookie();
+            OnAccountChanged?.Invoke(this, null);
+        }
+
         public async Task LoadUserInfo()
         {
             try

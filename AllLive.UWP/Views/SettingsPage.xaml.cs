@@ -1,5 +1,6 @@
 ﻿using AllLive.UWP.Helper;
 using CoreConfig = AllLive.Core.Helper.CoreConfig;
+using AllLive.UWP.Models;
 using AllLive.UWP.ViewModels;
 using Microsoft.Toolkit.Uwp.Helpers;
 using Microsoft.UI.Xaml.Controls;
@@ -55,9 +56,16 @@ namespace AllLive.UWP.Views
 
         private void BiliAccount_OnAccountChanged(object sender, EventArgs e)
         {
+            UpdateBiliAccountUi();
+        }
+
+        private void UpdateBiliAccountUi()
+        {
             if (BiliAccount.Instance.Logined)
             {
-                txtBili.Text = $"已登录：{BiliAccount.Instance.UserName}";
+                txtBili.Text = string.IsNullOrWhiteSpace(BiliAccount.Instance.UserName)
+                    ? "已登录"
+                    : $"已登录：{BiliAccount.Instance.UserName}";
                 BtnLoginBili.Visibility = Visibility.Collapsed;
                 BtnLogoutBili.Visibility = Visibility.Visible;
             }
@@ -289,12 +297,7 @@ namespace AllLive.UWP.Views
             });
 
 
-            if(BiliAccount.Instance.Logined)
-            {
-                txtBili.Text = $"已登录：{BiliAccount.Instance.UserName}";
-                BtnLoginBili.Visibility = Visibility.Collapsed;
-                BtnLogoutBili.Visibility = Visibility.Visible;
-            }
+            UpdateBiliAccountUi();
            
         }
 
@@ -307,6 +310,7 @@ namespace AllLive.UWP.Views
             public int? PaneDisplayMode { get; set; }
             public bool? MouseBack { get; set; }
             public int? FavoriteAutoRefreshMinutes { get; set; }
+            public bool? FavoriteHideOffline { get; set; }
             public bool? NewWindowLiveRoom { get; set; }
             public int? VideoDecoder { get; set; }
             public bool? DouyuSignEnabled { get; set; }
@@ -314,12 +318,28 @@ namespace AllLive.UWP.Views
             public bool? DouyinSignEnabled { get; set; }
             public string DouyinSignUrl { get; set; }
             public double? MessageFontSize { get; set; }
+            public double? PlayerVolume { get; set; }
+            public double? PlayerBrightness { get; set; }
+            public double? RightDetailWidth { get; set; }
             public bool? LiveDanmuShow { get; set; }
             public bool? KeepSuperChat { get; set; }
             public int? DanmuCleanCount { get; set; }
+            public int? LiveDanmuTopMargin { get; set; }
+            public double? LiveDanmuArea { get; set; }
+            public double? LiveDanmuFontZoom { get; set; }
+            public int? LiveDanmuSpeed { get; set; }
+            public bool? LiveDanmuBold { get; set; }
+            public bool? LiveDanmuColourful { get; set; }
+            public int? LiveDanmuBorderStyle { get; set; }
+            public double? LiveDanmuOpacity { get; set; }
             public List<string> ShieldWords { get; set; }
             public bool? LogEnabled { get; set; }
+            public bool? IgnoreBiliLoginTip { get; set; }
+            public string BiliCookie { get; set; }
+            public long? BiliUserId { get; set; }
+            public string BiliUserName { get; set; }
             public string DouyinCookie { get; set; }
+            public List<FavoriteJsonItem> Favorites { get; set; }
         }
 
         private static int ClampInt(int value, int min, int max)
@@ -353,6 +373,83 @@ namespace AllLive.UWP.Views
             return size < 10 ? 10 : size;
         }
 
+        private static double ClampDouble(double value, double min, double max)
+        {
+            if (value < min)
+            {
+                return min;
+            }
+            if (value > max)
+            {
+                return max;
+            }
+            return value;
+        }
+
+        private static string GetFavoriteSiteId(string siteName)
+        {
+            switch (siteName)
+            {
+                case "哔哩哔哩直播":
+                    return "bilibili";
+                case "斗鱼直播":
+                    return "douyu";
+                case "虎牙直播":
+                    return "huya";
+                case "抖音直播":
+                    return "douyin";
+                default:
+                    return "";
+            }
+        }
+
+        private static FavoriteJsonItem CreateFavoriteJsonItem(FavoriteItem item)
+        {
+            var siteId = GetFavoriteSiteId(item.SiteName);
+            return new FavoriteJsonItem()
+            {
+                SiteId = siteId,
+                Id = $"{siteId}_{item.RoomID}",
+                RoomId = item.RoomID,
+                UserName = item.UserName,
+                Face = item.Photo,
+                AddTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.M"),
+                Sort = item.SortOrder
+            };
+        }
+
+        private async Task<List<FavoriteJsonItem>> BuildFavoriteBackupAsync()
+        {
+            var favorites = await DatabaseHelper.GetFavorites();
+            return favorites.Select(CreateFavoriteJsonItem).ToList();
+        }
+
+        private static void ApplyFavoriteBackup(IEnumerable<FavoriteJsonItem> items)
+        {
+            DatabaseHelper.DeleteFavorite();
+            foreach (var item in items ?? Enumerable.Empty<FavoriteJsonItem>())
+            {
+                if (item == null || string.IsNullOrWhiteSpace(item.RoomId))
+                {
+                    continue;
+                }
+                var siteName = item.SiteName;
+                if (string.IsNullOrWhiteSpace(siteName) || siteName == "未知")
+                {
+                    continue;
+                }
+                DatabaseHelper.AddFavorite(new FavoriteItem()
+                {
+                    SiteName = siteName,
+                    RoomID = item.RoomId,
+                    UserName = item.UserName,
+                    Photo = item.Face,
+                    SortOrder = item.Sort
+                });
+            }
+            MessageCenter.UpdateFavorite();
+        }
+
         private List<string> GetShieldWordsForBackup()
         {
             if (settingVM?.ShieldWords == null)
@@ -384,6 +481,7 @@ namespace AllLive.UWP.Views
             {
                 cookie = SettingHelper.GetValue<string>(SettingHelper.DOUYIN_COOKIE, "");
             }
+            var favorites = await BuildFavoriteBackupAsync();
             return new SettingsBackupData
             {
                 ExportedAt = DateTimeOffset.Now,
@@ -392,6 +490,7 @@ namespace AllLive.UWP.Views
                 PaneDisplayMode = SettingHelper.GetValue<int>(SettingHelper.PANE_DISPLAY_MODE, 0),
                 MouseBack = SettingHelper.GetValue<bool>(SettingHelper.MOUSE_BACK, true),
                 FavoriteAutoRefreshMinutes = NormalizeFavoriteRefreshMinutes(null),
+                FavoriteHideOffline = SettingHelper.GetValue<bool>(SettingHelper.FAVORITE_HIDE_OFFLINE, false),
                 NewWindowLiveRoom = SettingHelper.GetValue<bool>(SettingHelper.NEW_WINDOW_LIVEROOM, true),
                 VideoDecoder = SettingHelper.GetValue<int>(SettingHelper.VIDEO_DECODER, 1),
                 DouyuSignEnabled = SettingHelper.GetValue<bool>(SettingHelper.DOUYU_SIGN_ENABLED, true),
@@ -399,13 +498,49 @@ namespace AllLive.UWP.Views
                 DouyinSignEnabled = SettingHelper.GetValue<bool>(SettingHelper.DOUYIN_SIGN_ENABLED, true),
                 DouyinSignUrl = SettingHelper.GetValue<string>(SettingHelper.DOUYIN_SIGN_URL, SettingHelper.DOUYIN_SIGN_URL_DEFAULT),
                 MessageFontSize = SettingHelper.GetValue<double>(SettingHelper.MESSAGE_FONTSIZE, 14.0),
+                PlayerVolume = SettingHelper.GetValue<double>(SettingHelper.PLAYER_VOLUME, 1.0),
+                PlayerBrightness = SettingHelper.GetValue<double>(SettingHelper.PLAYER_BRIGHTNESS, 0),
+                RightDetailWidth = SettingHelper.GetValue<double>(SettingHelper.RIGHT_DETAIL_WIDTH, 280),
                 LiveDanmuShow = SettingHelper.GetValue<bool>(SettingHelper.LiveDanmaku.SHOW, false),
                 KeepSuperChat = SettingHelper.GetValue<bool>(SettingHelper.LiveDanmaku.KEEP_SUPER_CHAT, true),
                 DanmuCleanCount = SettingHelper.GetValue<int>(SettingHelper.LiveDanmaku.DANMU_CLEAN_COUNT, 200),
+                LiveDanmuTopMargin = SettingHelper.GetValue<int>(SettingHelper.LiveDanmaku.TOP_MARGIN, 0),
+                LiveDanmuArea = SettingHelper.GetValue<double>(SettingHelper.LiveDanmaku.AREA, 1),
+                LiveDanmuFontZoom = SettingHelper.GetValue<double>(SettingHelper.LiveDanmaku.FONT_ZOOM, 1),
+                LiveDanmuSpeed = SettingHelper.GetValue<int>(SettingHelper.LiveDanmaku.SPEED, 10),
+                LiveDanmuBold = SettingHelper.GetValue<bool>(SettingHelper.LiveDanmaku.BOLD, false),
+                LiveDanmuColourful = SettingHelper.GetValue<bool>(SettingHelper.LiveDanmaku.COLOURFUL, true),
+                LiveDanmuBorderStyle = SettingHelper.GetValue<int>(SettingHelper.LiveDanmaku.BORDER_STYLE, 2),
+                LiveDanmuOpacity = SettingHelper.GetValue<double>(SettingHelper.LiveDanmaku.OPACITY, 1.0),
                 ShieldWords = GetShieldWordsForBackup(),
                 LogEnabled = SettingHelper.GetValue<bool>(SettingHelper.LOG_ENABLED, false),
-                DouyinCookie = cookie ?? ""
+                IgnoreBiliLoginTip = SettingHelper.GetValue<bool>(SettingHelper.IGNORE_BILI_LOGIN_TIP, false),
+                BiliCookie = SettingHelper.GetValue<string>(SettingHelper.BILI_COOKIE, ""),
+                BiliUserId = SettingHelper.GetValue<long>(SettingHelper.BILI_USER_ID, 0L),
+                BiliUserName = BiliAccount.Instance.UserName ?? "",
+                DouyinCookie = cookie ?? "",
+                Favorites = favorites
             };
+        }
+
+        private void ApplyBiliSettingsBackup(SettingsBackupData data)
+        {
+            if (data.BiliCookie == null)
+            {
+                return;
+            }
+
+            var cookie = data.BiliCookie?.Trim() ?? "";
+            if (string.IsNullOrEmpty(cookie))
+            {
+                BiliAccount.Instance.Logout();
+                return;
+            }
+
+            BiliAccount.Instance.ApplyLoginState(
+                cookie,
+                data.BiliUserId ?? 0L,
+                data.BiliUserName ?? "");
         }
 
         private async Task ApplySettingsBackupAsync(SettingsBackupData data)
@@ -419,6 +554,7 @@ namespace AllLive.UWP.Views
             var paneDisplayMode = ClampInt(data.PaneDisplayMode ?? SettingHelper.GetValue<int>(SettingHelper.PANE_DISPLAY_MODE, 0), 0, 1);
             var mouseBack = data.MouseBack ?? SettingHelper.GetValue<bool>(SettingHelper.MOUSE_BACK, true);
             var favoriteRefreshMinutes = NormalizeFavoriteRefreshMinutes(data.FavoriteAutoRefreshMinutes);
+            var favoriteHideOffline = data.FavoriteHideOffline ?? SettingHelper.GetValue<bool>(SettingHelper.FAVORITE_HIDE_OFFLINE, false);
             var newWindowLiveRoom = data.NewWindowLiveRoom ?? SettingHelper.GetValue<bool>(SettingHelper.NEW_WINDOW_LIVEROOM, true);
             var videoDecoder = ClampInt(data.VideoDecoder ?? SettingHelper.GetValue<int>(SettingHelper.VIDEO_DECODER, 1), 0, 2);
             var douyuSignEnabled = data.DouyuSignEnabled ?? SettingHelper.GetValue<bool>(SettingHelper.DOUYU_SIGN_ENABLED, true);
@@ -426,16 +562,29 @@ namespace AllLive.UWP.Views
             var douyinSignEnabled = data.DouyinSignEnabled ?? SettingHelper.GetValue<bool>(SettingHelper.DOUYIN_SIGN_ENABLED, true);
             var douyinSignUrl = data.DouyinSignUrl ?? SettingHelper.GetValue<string>(SettingHelper.DOUYIN_SIGN_URL, SettingHelper.DOUYIN_SIGN_URL_DEFAULT);
             var messageFontSize = NormalizeFontSize(data.MessageFontSize);
+            var playerVolume = ClampDouble(data.PlayerVolume ?? SettingHelper.GetValue<double>(SettingHelper.PLAYER_VOLUME, 1.0), 0, 1);
+            var playerBrightness = ClampDouble(data.PlayerBrightness ?? SettingHelper.GetValue<double>(SettingHelper.PLAYER_BRIGHTNESS, 0), 0, 1);
+            var rightDetailWidth = Math.Max(180, data.RightDetailWidth ?? SettingHelper.GetValue<double>(SettingHelper.RIGHT_DETAIL_WIDTH, 280));
             var liveDanmuShow = data.LiveDanmuShow ?? SettingHelper.GetValue<bool>(SettingHelper.LiveDanmaku.SHOW, false);
             var keepSuperChat = data.KeepSuperChat ?? SettingHelper.GetValue<bool>(SettingHelper.LiveDanmaku.KEEP_SUPER_CHAT, true);
             var danmuCleanCount = NormalizeCleanCount(data.DanmuCleanCount);
+            var liveDanmuTopMargin = Math.Max(0, data.LiveDanmuTopMargin ?? SettingHelper.GetValue<int>(SettingHelper.LiveDanmaku.TOP_MARGIN, 0));
+            var liveDanmuArea = ClampDouble(data.LiveDanmuArea ?? SettingHelper.GetValue<double>(SettingHelper.LiveDanmaku.AREA, 1), 0, 1);
+            var liveDanmuFontZoom = Math.Max(0.1, data.LiveDanmuFontZoom ?? SettingHelper.GetValue<double>(SettingHelper.LiveDanmaku.FONT_ZOOM, 1));
+            var liveDanmuSpeed = Math.Max(1, data.LiveDanmuSpeed ?? SettingHelper.GetValue<int>(SettingHelper.LiveDanmaku.SPEED, 10));
+            var liveDanmuBold = data.LiveDanmuBold ?? SettingHelper.GetValue<bool>(SettingHelper.LiveDanmaku.BOLD, false);
+            var liveDanmuColourful = data.LiveDanmuColourful ?? SettingHelper.GetValue<bool>(SettingHelper.LiveDanmaku.COLOURFUL, true);
+            var liveDanmuBorderStyle = ClampInt(data.LiveDanmuBorderStyle ?? SettingHelper.GetValue<int>(SettingHelper.LiveDanmaku.BORDER_STYLE, 2), 0, 2);
+            var liveDanmuOpacity = ClampDouble(data.LiveDanmuOpacity ?? SettingHelper.GetValue<double>(SettingHelper.LiveDanmaku.OPACITY, 1.0), 0, 1);
             var logEnabled = data.LogEnabled ?? SettingHelper.GetValue<bool>(SettingHelper.LOG_ENABLED, false);
+            var ignoreBiliLoginTip = data.IgnoreBiliLoginTip ?? SettingHelper.GetValue<bool>(SettingHelper.IGNORE_BILI_LOGIN_TIP, false);
 
             SettingHelper.SetValue(SettingHelper.THEME, theme);
             SettingHelper.SetValue(SettingHelper.XBOX_MODE, xboxMode);
             SettingHelper.SetValue(SettingHelper.PANE_DISPLAY_MODE, paneDisplayMode);
             SettingHelper.SetValue(SettingHelper.MOUSE_BACK, mouseBack);
             SettingHelper.SetValue(SettingHelper.FAVORITE_AUTO_REFRESH_MINUTES, favoriteRefreshMinutes);
+            SettingHelper.SetValue(SettingHelper.FAVORITE_HIDE_OFFLINE, favoriteHideOffline);
             SettingHelper.SetValue(SettingHelper.NEW_WINDOW_LIVEROOM, newWindowLiveRoom);
             SettingHelper.SetValue(SettingHelper.VIDEO_DECODER, videoDecoder);
             SettingHelper.SetValue(SettingHelper.DOUYU_SIGN_ENABLED, douyuSignEnabled);
@@ -443,10 +592,22 @@ namespace AllLive.UWP.Views
             SettingHelper.SetValue(SettingHelper.DOUYIN_SIGN_ENABLED, douyinSignEnabled);
             SettingHelper.SetValue(SettingHelper.DOUYIN_SIGN_URL, douyinSignUrl ?? "");
             SettingHelper.SetValue(SettingHelper.MESSAGE_FONTSIZE, messageFontSize);
+            SettingHelper.SetValue(SettingHelper.PLAYER_VOLUME, playerVolume);
+            SettingHelper.SetValue(SettingHelper.PLAYER_BRIGHTNESS, playerBrightness);
+            SettingHelper.SetValue(SettingHelper.RIGHT_DETAIL_WIDTH, rightDetailWidth);
             SettingHelper.SetValue(SettingHelper.LiveDanmaku.SHOW, liveDanmuShow);
             SettingHelper.SetValue(SettingHelper.LiveDanmaku.KEEP_SUPER_CHAT, keepSuperChat);
             SettingHelper.SetValue(SettingHelper.LiveDanmaku.DANMU_CLEAN_COUNT, danmuCleanCount);
+            SettingHelper.SetValue(SettingHelper.LiveDanmaku.TOP_MARGIN, liveDanmuTopMargin);
+            SettingHelper.SetValue(SettingHelper.LiveDanmaku.AREA, liveDanmuArea);
+            SettingHelper.SetValue(SettingHelper.LiveDanmaku.FONT_ZOOM, liveDanmuFontZoom);
+            SettingHelper.SetValue(SettingHelper.LiveDanmaku.SPEED, liveDanmuSpeed);
+            SettingHelper.SetValue(SettingHelper.LiveDanmaku.BOLD, liveDanmuBold);
+            SettingHelper.SetValue(SettingHelper.LiveDanmaku.COLOURFUL, liveDanmuColourful);
+            SettingHelper.SetValue(SettingHelper.LiveDanmaku.BORDER_STYLE, liveDanmuBorderStyle);
+            SettingHelper.SetValue(SettingHelper.LiveDanmaku.OPACITY, liveDanmuOpacity);
             SettingHelper.SetValue(SettingHelper.LOG_ENABLED, logEnabled);
+            SettingHelper.SetValue(SettingHelper.IGNORE_BILI_LOGIN_TIP, ignoreBiliLoginTip);
 
             if (data.ShieldWords != null)
             {
@@ -464,6 +625,12 @@ namespace AllLive.UWP.Views
                 txtDouyinCookie.Text = normalizedCookie;
                 txtDouyinCookie.SelectionStart = txtDouyinCookie.Text.Length;
                 _isUpdatingDouyinCookie = false;
+            }
+
+            ApplyBiliSettingsBackup(data);
+            if (data.Favorites != null)
+            {
+                ApplyFavoriteBackup(data.Favorites);
             }
 
             cbTheme.SelectedIndex = theme;
@@ -804,18 +971,14 @@ namespace AllLive.UWP.Views
             var result= await MessageCenter.BiliBiliLogin();
             if (result)
             {
-                txtBili.Text = $"已登录：{BiliAccount.Instance.UserName}";
-                BtnLoginBili.Visibility = Visibility.Collapsed;
-                BtnLogoutBili.Visibility = Visibility.Visible;
+                UpdateBiliAccountUi();
             }
         }
 
         private void BtnLogoutBili_Click(object sender, RoutedEventArgs e)
         {
             BiliAccount.Instance.Logout();
-            txtBili.Text = "登录可享受高清直播";
-            BtnLoginBili.Visibility = Visibility.Visible;
-            BtnLogoutBili.Visibility = Visibility.Collapsed;
+            UpdateBiliAccountUi();
 
         }
     }

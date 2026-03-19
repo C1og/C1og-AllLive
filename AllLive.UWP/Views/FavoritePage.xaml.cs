@@ -44,6 +44,7 @@ namespace AllLive.UWP.Views
         protected override void OnNavigatedTo(NavigationEventArgs e)
         {
             base.OnNavigatedTo(e);
+            favoriteVM.HideOffline = SettingHelper.GetValue<bool>(SettingHelper.FAVORITE_HIDE_OFFLINE, false);
 
             if(favoriteVM.Items.Count==0)
             {
