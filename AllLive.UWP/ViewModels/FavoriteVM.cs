@@ -149,7 +149,31 @@ namespace AllLive.UWP.ViewModels
                 if (site != null)
                 {
                     var status = await site.LiveSite.GetLiveStatus(item.RoomID);
+                    if (refreshVersion != _refreshVersion)
+                    {
+                        return;
+                    }
                     item.LiveStatus = status;
+                    if (!status)
+                    {
+                        item.LiveTitle = string.Empty;
+                        return;
+                    }
+
+                    var detail = await site.LiveSite.GetRoomDetail(item.RoomID);
+                    if (refreshVersion != _refreshVersion)
+                    {
+                        return;
+                    }
+                    if (detail != null)
+                    {
+                        item.LiveStatus = detail.Status;
+                        item.LiveTitle = detail.Status ? NormalizeLiveTitle(detail.Title) : string.Empty;
+                    }
+                    else
+                    {
+                        item.LiveTitle = string.Empty;
+                    }
                 }
             }
             catch (Exception ex)
@@ -160,6 +184,15 @@ namespace AllLive.UWP.ViewModels
             {
                 _liveStatusSemaphore.Release();
             }
+        }
+
+        private static string NormalizeLiveTitle(string title)
+        {
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                return string.Empty;
+            }
+            return title.Replace("\r", " ").Replace("\n", " ").Trim();
         }
 
         private void ApplySortAndFilter(IList<FavoriteItem> source = null)

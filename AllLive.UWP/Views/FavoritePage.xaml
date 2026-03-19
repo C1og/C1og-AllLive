@@ -99,38 +99,59 @@
                                 Background="Blue"
                                 BorderThickness="0"
                                 ProfilePicture="{x:Bind Path=Photo}" />
-                            <StackPanel
+                            <Grid
                                 Grid.Column="1"
                                 Margin="8,0,0,0"
                                 VerticalAlignment="Center">
-                                <TextBlock Text="{x:Bind Path=UserName}" />
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
                                 <TextBlock
-                                    Margin="0,4,0,0"
-                                    FontSize="12"
-                                    Foreground="Gray"
-                                    Text="{x:Bind Path=SiteName}" />
-                            </StackPanel>
-                            <StackPanel
-                                Grid.ColumnSpan="2"
-                                Margin="4"
-                                HorizontalAlignment="Right"
-                                VerticalAlignment="Center"
-                                Orientation="Horizontal"
-                                Visibility="{x:Bind Path=LiveStatus, Mode=OneWay}">
+                                    Text="{x:Bind Path=UserName}"
+                                    FontWeight="SemiBold"
+                                    TextTrimming="CharacterEllipsis" />
                                 <Ellipse
+                                    Grid.Column="1"
                                     Width="8"
                                     Height="8"
-                                    Margin="0,0,4,0"
+                                    Margin="8,0,0,0"
                                     VerticalAlignment="Center"
-                                    Fill="Green" />
-                                <TextBlock
-                                    VerticalAlignment="Center"
-                                    FontSize="12"
-                                    Foreground="Green"
-                                    Text="直播中"
+                                    Fill="Green"
                                     Visibility="{x:Bind Path=LiveStatus, Mode=OneWay}" />
-                            </StackPanel>
-
+                                <Grid
+                                    Grid.Row="1"
+                                    Grid.ColumnSpan="2"
+                                    Margin="0,4,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock
+                                        Grid.Column="0"
+                                        FontSize="12"
+                                        Foreground="Gray"
+                                        Text="{x:Bind Path=SiteName}" />
+                                    <TextBlock
+                                        Grid.Column="1"
+                                        Margin="4,0"
+                                        FontSize="12"
+                                        Foreground="Gray"
+                                        Text="·"
+                                        Visibility="{x:Bind Path=HasLiveTitle, Mode=OneWay}" />
+                                    <TextBlock
+                                        Grid.Column="2"
+                                        FontSize="12"
+                                        Text="{x:Bind Path=LiveTitle}"
+                                        TextTrimming="CharacterEllipsis"
+                                        Visibility="{x:Bind Path=HasLiveTitle, Mode=OneWay}" />
+                                </Grid>
+                            </Grid>
                         </Grid>
                     </DataTemplate>
                 </controls:MyAdaptiveGridView.ItemTemplate>

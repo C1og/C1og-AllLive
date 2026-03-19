@@ -29,5 +29,22 @@ namespace AllLive.UWP.Models
             set { _LiveStatus = value; DoPropertyChanged("LiveStatus"); }
         }
 
+        private string _liveTitle = "";
+        public string LiveTitle
+        {
+            get { return _liveTitle; }
+            set
+            {
+                _liveTitle = value;
+                DoPropertyChanged("LiveTitle");
+                DoPropertyChanged("HasLiveTitle");
+            }
+        }
+
+        public bool HasLiveTitle
+        {
+            get { return !string.IsNullOrWhiteSpace(LiveTitle); }
+        }
+
     }
 }
