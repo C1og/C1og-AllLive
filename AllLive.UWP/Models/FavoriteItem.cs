@@ -46,5 +46,25 @@ namespace AllLive.UWP.Models
             get { return !string.IsNullOrWhiteSpace(LiveTitle); }
         }
 
+        public string SiteShortName
+        {
+            get
+            {
+                switch (SiteName)
+                {
+                    case "哔哩哔哩直播":
+                        return "哔哩";
+                    case "虎牙直播":
+                        return "虎牙";
+                    case "斗鱼直播":
+                        return "斗鱼";
+                    case "抖音直播":
+                        return "抖音";
+                    default:
+                        return SiteName;
+                }
+            }
+        }
+
     }
 }

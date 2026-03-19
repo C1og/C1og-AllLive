@@ -114,43 +114,35 @@
                                 <TextBlock
                                     Text="{x:Bind Path=UserName}"
                                     FontWeight="SemiBold"
+                                    Margin="0,0,8,0"
                                     TextTrimming="CharacterEllipsis" />
-                                <Ellipse
+                                <StackPanel
                                     Grid.Column="1"
-                                    Width="8"
-                                    Height="8"
-                                    Margin="8,0,0,0"
+                                    HorizontalAlignment="Right"
                                     VerticalAlignment="Center"
-                                    Fill="Green"
-                                    Visibility="{x:Bind Path=LiveStatus, Mode=OneWay}" />
-                                <Grid
+                                    Orientation="Horizontal">
+                                    <Ellipse
+                                        Width="8"
+                                        Height="8"
+                                        Margin="0,0,4,0"
+                                        VerticalAlignment="Center"
+                                        Fill="Green"
+                                        Visibility="{x:Bind Path=LiveStatus, Mode=OneWay}" />
+                                    <TextBlock
+                                        FontSize="12"
+                                        Foreground="Gray"
+                                        Text="{x:Bind Path=SiteShortName}"
+                                        TextAlignment="Right"
+                                        TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                                <TextBlock
                                     Grid.Row="1"
                                     Grid.ColumnSpan="2"
-                                    Margin="0,4,0,0">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock
-                                        Grid.Column="0"
-                                        FontSize="12"
-                                        Foreground="Gray"
-                                        Text="{x:Bind Path=SiteName}" />
-                                    <TextBlock
-                                        Grid.Column="1"
-                                        Margin="4,0"
-                                        FontSize="12"
-                                        Foreground="Gray"
-                                        Text="·"
-                                        Visibility="{x:Bind Path=HasLiveTitle, Mode=OneWay}" />
-                                    <TextBlock
-                                        Grid.Column="2"
-                                        FontSize="12"
-                                        Text="{x:Bind Path=LiveTitle}"
-                                        TextTrimming="CharacterEllipsis"
-                                        Visibility="{x:Bind Path=HasLiveTitle, Mode=OneWay}" />
-                                </Grid>
+                                    Margin="0,4,0,0"
+                                    FontSize="12"
+                                    Text="{x:Bind Path=LiveTitle}"
+                                    TextTrimming="CharacterEllipsis"
+                                    Visibility="{x:Bind Path=HasLiveTitle, Mode=OneWay}" />
                             </Grid>
                         </Grid>
                     </DataTemplate>

@@ -1,5 +1,5 @@
 ﻿# ================= 配置区域 =================
-$workDir = "D:\D-Software\C1og-AllLive"
+$workDir = "D:\D-Software\source\C1og-AllLive"
 $uwpProcessName = "AllLive.UWP"
 $uwpAppId = "5421.24244EC421563_a5x6jjv384fej!App" 
 # 强制控制台使用 UTF8，防止日志乱码
