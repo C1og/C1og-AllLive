@@ -348,11 +348,63 @@ namespace AllLive.Core
             }
 
             return urls
-                .Select((url, index) => new { url, index, score = GetBilibiliUrlScore(url) })
-                .OrderByDescending(x => x.score)
+                .Select((url, index) => new
+                {
+                    url,
+                    index,
+                    mcdnPenalty = IsBilibiliMcdn(url) ? 1 : 0,
+                    order = GetBilibiliUrlOrder(url),
+                    score = GetBilibiliUrlScore(url)
+                })
+                .OrderBy(x => x.mcdnPenalty)
+                .ThenBy(x => x.order)
+                .ThenByDescending(x => x.score)
                 .ThenBy(x => x.index)
                 .Select(x => x.url)
                 .ToList();
+        }
+
+        private static bool IsBilibiliMcdn(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                return false;
+            }
+
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            {
+                return url.IndexOf("mcdn", StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+
+            var host = uri.Host ?? string.Empty;
+            return host.IndexOf("mcdn", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static int GetBilibiliUrlOrder(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                return int.MaxValue;
+            }
+
+            try
+            {
+                if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+                {
+                    return int.MaxValue;
+                }
+
+                var query = HttpUtility.ParseQueryString(uri.Query);
+                if (int.TryParse(query["order"], out var order) && order > 0)
+                {
+                    return order;
+                }
+            }
+            catch
+            {
+            }
+
+            return int.MaxValue;
         }
 
         private static int GetBilibiliUrlScore(string url)
@@ -378,11 +430,6 @@ namespace AllLive.Core
             else if (lower.Contains(".m3u8"))
             {
                 score += 1000;
-            }
-
-            if (!string.IsNullOrEmpty(host) && host.IndexOf("d1--cn", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                score += 300;
             }
 
             if (!string.IsNullOrEmpty(host) && host.IndexOf("mcdn", StringComparison.OrdinalIgnoreCase) >= 0)
