@@ -15,6 +15,7 @@ using Windows.ApplicationModel.Core;
 using System.ComponentModel;
 using System.Timers;
 using Windows.Foundation;
+using System.Reflection;
 
 namespace AllLive.UWP.ViewModels
 {
@@ -358,6 +359,7 @@ namespace AllLive.UWP.ViewModels
                 RoomId = roomId;
                 var result = await Site.GetRoomDetail(roomId);
                 detail = result;
+                LogRoomDetail(result);
                 RoomID = result.RoomID;
 
                 ApplyAudienceMetrics(result);
@@ -901,6 +903,201 @@ namespace AllLive.UWP.ViewModels
                     return;
                 }
             });
+        }
+
+        private void LogRoomDetail(LiveRoomDetail roomDetail)
+        {
+            try
+            {
+                if (roomDetail == null)
+                {
+                    return;
+                }
+
+                var sb = new StringBuilder();
+                sb.AppendLine("直播间详情加载:");
+                sb.AppendLine($"站点: {Site?.Name}");
+                sb.AppendLine($"请求房间ID: {RoomId}");
+                sb.AppendLine($"实际房间ID: {roomDetail.RoomID}");
+                sb.AppendLine($"标题: {roomDetail.Title}");
+                sb.AppendLine($"主播: {roomDetail.UserName}");
+                sb.AppendLine($"开播状态: {roomDetail.Status}");
+                sb.AppendLine($"兼容显示值 Online: {roomDetail.Online}");
+                sb.AppendLine($"ViewerCount: {(roomDetail.ViewerCount.HasValue ? roomDetail.ViewerCount.Value.ToString() : "null")}");
+                sb.AppendLine($"Popularity: {(roomDetail.Popularity.HasValue ? roomDetail.Popularity.Value.ToString() : "null")}");
+                sb.AppendLine($"链接: {roomDetail.Url}");
+                if (!string.IsNullOrWhiteSpace(roomDetail.Introduction))
+                {
+                    sb.AppendLine($"简介长度: {roomDetail.Introduction.Length}");
+                }
+                if (!string.IsNullOrWhiteSpace(roomDetail.Notice))
+                {
+                    sb.AppendLine($"公告长度: {roomDetail.Notice.Length}");
+                }
+
+                var dataSummary = BuildSafeObjectSummary("Data", roomDetail.Data);
+                if (!string.IsNullOrWhiteSpace(dataSummary))
+                {
+                    sb.AppendLine(dataSummary);
+                }
+
+                var danmakuSummary = BuildSafeObjectSummary("DanmakuData", roomDetail.DanmakuData);
+                if (!string.IsNullOrWhiteSpace(danmakuSummary))
+                {
+                    sb.AppendLine(danmakuSummary);
+                }
+
+                LogHelper.Log(sb.ToString().TrimEnd(), LogType.DEBUG);
+            }
+            catch (Exception ex)
+            {
+                LogHelper.Log("直播间详情日志生成失败", LogType.ERROR, ex);
+            }
+        }
+
+        private string BuildSafeObjectSummary(string name, object value)
+        {
+            if (value == null)
+            {
+                return $"{name}: null";
+            }
+
+            if (value is string str)
+            {
+                if (Site?.Name == "斗鱼直播" && name == "Data")
+                {
+                    return $"{name}: string len={str.Length} (已隐藏签名原文)";
+                }
+                return $"{name}: string len={str.Length}";
+            }
+
+            if (Site?.Name == "虎牙直播" && name == "Data")
+            {
+                var type = value.GetType();
+                var lines = ReadCollectionCount(type.GetProperty("Lines"), value);
+                var bitRates = ReadCollectionCount(type.GetProperty("BitRates"), value);
+                var uid = type.GetProperty("Uid")?.GetValue(value)?.ToString();
+                var uuid = type.GetProperty("UUid")?.GetValue(value)?.ToString();
+                return $"{name}: {type.FullName} lines={lines} bitRates={bitRates} uid={uid} uuid={uuid}";
+            }
+
+            return $"{name}: {BuildObjectPropertySummary(value, 6)}";
+        }
+
+        private static string BuildObjectPropertySummary(object value, int maxProperties)
+        {
+            if (value == null)
+            {
+                return "null";
+            }
+
+            var type = value.GetType();
+            if (type.IsPrimitive || value is decimal || value is DateTime || value is DateTimeOffset || value is Guid)
+            {
+                return $"{type.FullName} value={value}";
+            }
+
+            var props = type.GetProperties(BindingFlags.Instance | BindingFlags.Public)
+                .Where(x => x.CanRead && x.GetIndexParameters().Length == 0)
+                .Take(maxProperties)
+                .ToList();
+            if (props.Count == 0)
+            {
+                return type.FullName;
+            }
+
+            var parts = new List<string>();
+            foreach (var prop in props)
+            {
+                if (IsSensitivePropertyName(prop.Name))
+                {
+                    continue;
+                }
+
+                object propValue;
+                try
+                {
+                    propValue = prop.GetValue(value);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (propValue == null)
+                {
+                    parts.Add($"{prop.Name}=null");
+                    continue;
+                }
+
+                if (propValue is string str)
+                {
+                    parts.Add($"{prop.Name}=string(len={str.Length})");
+                    continue;
+                }
+
+                var count = TryGetCollectionCount(propValue);
+                if (count.HasValue)
+                {
+                    parts.Add($"{prop.Name}=count({count.Value})");
+                    continue;
+                }
+
+                if (propValue.GetType().IsPrimitive || propValue is decimal)
+                {
+                    parts.Add($"{prop.Name}={propValue}");
+                    continue;
+                }
+
+                parts.Add($"{prop.Name}={propValue.GetType().Name}");
+            }
+
+            return parts.Count == 0 ? type.FullName : $"{type.FullName} {string.Join(", ", parts)}";
+        }
+
+        private static int ReadCollectionCount(PropertyInfo property, object owner)
+        {
+            if (property == null || owner == null)
+            {
+                return -1;
+            }
+
+            try
+            {
+                return TryGetCollectionCount(property.GetValue(owner)) ?? -1;
+            }
+            catch
+            {
+                return -1;
+            }
+        }
+
+        private static int? TryGetCollectionCount(object value)
+        {
+            if (value == null || value is string)
+            {
+                return null;
+            }
+
+            if (value is System.Collections.ICollection collection)
+            {
+                return collection.Count;
+            }
+
+            return null;
+        }
+
+        private static bool IsSensitivePropertyName(string propertyName)
+        {
+            if (string.IsNullOrWhiteSpace(propertyName))
+            {
+                return false;
+            }
+
+            return propertyName.IndexOf("cookie", StringComparison.OrdinalIgnoreCase) >= 0
+                || propertyName.IndexOf("token", StringComparison.OrdinalIgnoreCase) >= 0
+                || propertyName.IndexOf("sign", StringComparison.OrdinalIgnoreCase) >= 0
+                || propertyName.IndexOf("auth", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         public async void Stop()
