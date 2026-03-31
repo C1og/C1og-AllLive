@@ -73,7 +73,12 @@ namespace AllLive.UWP.Views
         private DateTimeOffset? lastMediaOpenedUtc;
         private DateTimeOffset? lastPlaybackStartUtc;
         private string lastPlaybackUrl;
+        private string currentLineRetryUrl;
+        private int currentLineRetryCount;
         private static readonly TimeSpan EarlyEndThreshold = TimeSpan.FromSeconds(8);
+        private static readonly TimeSpan CurrentLineRetryDelay = TimeSpan.FromSeconds(1);
+        private static readonly TimeSpan BilibiliRetryWindow = TimeSpan.FromSeconds(45);
+        private const string BilibiliPlaybackUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0";
 
         public LiveRoomPage()
         {
@@ -94,6 +99,7 @@ namespace AllLive.UWP.Views
             controlTimer = new DispatcherTimer() { Interval = TimeSpan.FromSeconds(1) };
             controlTimer.Tick += ControlTimer_Tick;
             mediaPlayer = new MediaPlayer();
+            mediaPlayer.RealTimePlayback = true;
             mediaPlayer.PlaybackSession.PlaybackStateChanged += PlaybackSession_PlaybackStateChanged;
             mediaPlayer.PlaybackSession.BufferingStarted += PlaybackSession_BufferingStarted;
             mediaPlayer.PlaybackSession.BufferingProgressChanged += PlaybackSession_BufferingProgressChanged;
@@ -208,6 +214,10 @@ namespace AllLive.UWP.Views
                     LogHelper.Log(earlyProbe, LogType.DEBUG);
                 }
                 if (TryRefreshHuyaPlayUrls("播放结束"))
+                {
+                    return;
+                }
+                if (TryRetryCurrentLine("播放结束"))
                 {
                     return;
                 }
@@ -943,7 +953,7 @@ namespace AllLive.UWP.Views
         {
             if (liveRoomVM?.SiteName == "哔哩哔哩直播")
             {
-                request.Headers.Append("User-Agent", "Mozilla/5.0 BiliDroid/1.12.0 (bbcallen@gmail.com)");
+                request.Headers.Append("User-Agent", BilibiliPlaybackUserAgent);
                 request.Headers.Append("Referer", "https://live.bilibili.com/");
             }
             else if (liveRoomVM?.SiteName == "虎牙直播")
@@ -1209,6 +1219,11 @@ namespace AllLive.UWP.Views
 
                 var config = new MediaSourceConfig();
                 config.FFmpegOptions.Add("rtsp_transport", "tcp");
+                config.FFmpegOptions.Add("multiple_requests", "1");
+                config.FFmpegOptions.Add("reconnect", "1");
+                config.FFmpegOptions.Add("reconnect_at_eof", "1");
+                config.FFmpegOptions.Add("reconnect_streamed", "1");
+                config.FFmpegOptions.Add("reconnect_delay_max", "2");
                 var decoder = SettingHelper.GetValue<int>(SettingHelper.VIDEO_DECODER, 1);
                 switch (decoder)
                 {
@@ -1224,7 +1239,7 @@ namespace AllLive.UWP.Views
                 }
                 if (liveRoomVM.SiteName == "哔哩哔哩直播")
                 {
-                    config.FFmpegOptions.Add("user_agent", "Mozilla/5.0 BiliDroid/1.12.0 (bbcallen@gmail.com)");
+                    config.FFmpegOptions.Add("user_agent", BilibiliPlaybackUserAgent);
                     config.FFmpegOptions.Add("referer", "https://live.bilibili.com/");
                 }
                 else if (liveRoomVM.SiteName == "虎牙直播")
@@ -1241,6 +1256,10 @@ namespace AllLive.UWP.Views
                     config.FFmpegOptions.Add("user_agent", "HYSDK(Windows, 30000002)_APP(pc_exe&6080100&official)_SDK(trans&2.23.0.4969)");
                     config.FFmpegOptions.Add("referer", "https://m.huya.com/");
                 }
+                lastPlaybackState = null;
+                lastMediaOpenedUtc = null;
+                lastPlaybackStartUtc = null;
+                lastPlaybackUrl = url;
                 lastConfigSnapshot = BuildConfigSnapshot(config);
                 lastUrlAnalysis = BuildUrlAnalysis(url);
                 lastProbeSnapshot = null;
@@ -1290,6 +1309,10 @@ namespace AllLive.UWP.Views
             {
                 return;
             }
+            if (TryRetryCurrentLine("播放失败"))
+            {
+                return;
+            }
             // 当前线路播放失败，尝试下一个线路
             var index = liveRoomVM.Lines.IndexOf(liveRoomVM.CurrentLine);
             if (index == liveRoomVM.Lines.Count - 1)
@@ -1323,6 +1346,74 @@ namespace AllLive.UWP.Views
             LogHelper.Log($"虎牙播放异常，尝试刷新播放地址。原因: {reason}", LogType.DEBUG);
             liveRoomVM.LoadPlayUrl();
             return true;
+        }
+
+        private bool TryRetryCurrentLine(string reason)
+        {
+            var url = liveRoomVM?.CurrentLine?.Url;
+            if (!ShouldRetryCurrentLine(url))
+            {
+                return false;
+            }
+
+            if (!string.Equals(currentLineRetryUrl, url, StringComparison.OrdinalIgnoreCase))
+            {
+                currentLineRetryUrl = url;
+                currentLineRetryCount = 0;
+            }
+
+            if (currentLineRetryCount >= 2)
+            {
+                return false;
+            }
+
+            currentLineRetryCount++;
+            var delay = currentLineRetryCount > 1 ? CurrentLineRetryDelay : TimeSpan.Zero;
+            LogHelper.Log($"哔哩哔哩直播播放异常，重试当前线路。原因: {reason} 次数: {currentLineRetryCount}/2 线路: {liveRoomVM?.CurrentLine?.Name}", LogType.DEBUG);
+            _ = RetryCurrentLineAsync(url, delay);
+            return true;
+        }
+
+        private bool ShouldRetryCurrentLine(string url)
+        {
+            if (liveRoomVM?.SiteName != "哔哩哔哩直播" || string.IsNullOrWhiteSpace(url))
+            {
+                return false;
+            }
+
+            if (url.IndexOf(".m3u8", StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                return false;
+            }
+
+            if (!lastPlaybackStartUtc.HasValue)
+            {
+                return true;
+            }
+
+            return (DateTimeOffset.UtcNow - lastPlaybackStartUtc.Value) <= BilibiliRetryWindow;
+        }
+
+        private async Task RetryCurrentLineAsync(string url, TimeSpan delay)
+        {
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                return;
+            }
+
+            if (delay > TimeSpan.Zero)
+            {
+                await Task.Delay(delay);
+            }
+
+            await this.Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
+            {
+                if (!string.Equals(liveRoomVM?.CurrentLine?.Url, url, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+                _ = SetPlayer(url);
+            });
         }
 
         private void StopPlay()
@@ -2141,6 +2232,8 @@ namespace AllLive.UWP.Views
         private void BottomBtnRefresh_Click(object sender, RoutedEventArgs e)
         {
             if (liveRoomVM.Loading) return;
+            currentLineRetryUrl = null;
+            currentLineRetryCount = 0;
             if (mediaPlayer != null)
             {
                 mediaPlayer.Pause();

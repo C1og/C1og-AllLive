@@ -22,6 +22,8 @@ namespace AllLive.UWP.Helper
     public static class MessageCenter
     {
         private static readonly ConcurrentDictionary<string, int> OpenLiveRoomWindows = new ConcurrentDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        private static readonly ConcurrentDictionary<string, DateTimeOffset> OpeningLiveRoomWindows = new ConcurrentDictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase);
+        private static readonly TimeSpan LiveRoomWindowOpenThrottle = TimeSpan.FromSeconds(3);
         public delegate void NavigatePageHandler(Type page, object data);
         public static event NavigatePageHandler NavigatePageEvent;
         public delegate void ChangeTitleHandler(string title, string logo);
@@ -115,41 +117,56 @@ namespace AllLive.UWP.Helper
                     {
                         return;
                     }
+                    if (IsLiveRoomWindowOpening(liveRoomKey))
+                    {
+                        return;
+                    }
                     OpenLiveRoomWindows.TryRemove(liveRoomKey, out _);
                 }
 
-                CoreApplicationView newView = CoreApplication.CreateNewView();
-                int newViewId = 0;
-                await newView.Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
+                if (!TryMarkLiveRoomWindowOpening(liveRoomKey))
                 {
-                    Frame frame = new Frame();
-                    frame.RequestedTheme = (ElementTheme)SettingHelper.GetValue<int>(SettingHelper.THEME, 0);
-                    frame.Navigate(typeof(LiveRoomPage), data);
-                    Window.Current.Content = frame;
-                    Window.Current.Activate();
-                    newViewId = ApplicationView.GetForCurrentView().Id;
-                    if (!string.IsNullOrWhiteSpace(liveRoomKey))
+                    return;
+                }
+
+                try
+                {
+                    CoreApplicationView newView = CoreApplication.CreateNewView();
+                    int newViewId = 0;
+                    await newView.Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
                     {
-                        OpenLiveRoomWindows[liveRoomKey] = newViewId;
-                        ApplicationView.GetForCurrentView().Consolidated += (sender, args) =>
+                        Frame frame = new Frame();
+                        frame.RequestedTheme = (ElementTheme)SettingHelper.GetValue<int>(SettingHelper.THEME, 0);
+                        frame.Navigate(typeof(LiveRoomPage), data);
+                        Window.Current.Content = frame;
+                        Window.Current.Activate();
+                        newViewId = ApplicationView.GetForCurrentView().Id;
+                        if (!string.IsNullOrWhiteSpace(liveRoomKey))
                         {
-                            if (OpenLiveRoomWindows.TryGetValue(liveRoomKey, out var viewId) && viewId == newViewId)
+                            OpenLiveRoomWindows[liveRoomKey] = newViewId;
+                            ApplicationView.GetForCurrentView().Consolidated += (sender, args) =>
                             {
-                                OpenLiveRoomWindows.TryRemove(liveRoomKey, out _);
-                            }
-                        };
+                                if (OpenLiveRoomWindows.TryGetValue(liveRoomKey, out var viewId) && viewId == newViewId)
+                                {
+                                    OpenLiveRoomWindows.TryRemove(liveRoomKey, out _);
+                                }
+                            };
+                        }
+                        //ApplicationView.GetForCurrentView().Consolidated += (sender, args) =>
+                        //{
+                        //    frame.Navigate(typeof(BlankPage));
+                        //    //newView.CoreWindow.Close();
+                        //};
+                    });
+                    bool viewShown = await ApplicationViewSwitcher.TryShowAsStandaloneAsync(newViewId);
+                    if (!viewShown && !string.IsNullOrWhiteSpace(liveRoomKey))
+                    {
+                        OpenLiveRoomWindows.TryRemove(liveRoomKey, out _);
                     }
-                    //ApplicationView.GetForCurrentView().Consolidated += (sender, args) =>
-                    //{
-                    //    frame.Navigate(typeof(BlankPage));
-                      
-                    //    //newView.CoreWindow.Close();
-                    //};
-                });
-                bool viewShown = await ApplicationViewSwitcher.TryShowAsStandaloneAsync(newViewId);
-                if (!viewShown && !string.IsNullOrWhiteSpace(liveRoomKey))
+                }
+                finally
                 {
-                    OpenLiveRoomWindows.TryRemove(liveRoomKey, out _);
+                    ClearLiveRoomWindowOpening(liveRoomKey);
                 }
             }
             else
@@ -216,6 +233,57 @@ namespace AllLive.UWP.Helper
                 return null;
             }
             return $"{siteName}|{roomId}";
+        }
+
+        private static bool TryMarkLiveRoomWindowOpening(string liveRoomKey)
+        {
+            if (string.IsNullOrWhiteSpace(liveRoomKey))
+            {
+                return true;
+            }
+
+            while (true)
+            {
+                var now = DateTimeOffset.UtcNow;
+                if (!OpeningLiveRoomWindows.TryGetValue(liveRoomKey, out var openingAt))
+                {
+                    return OpeningLiveRoomWindows.TryAdd(liveRoomKey, now);
+                }
+                if ((now - openingAt) < LiveRoomWindowOpenThrottle)
+                {
+                    return false;
+                }
+                OpeningLiveRoomWindows.TryRemove(liveRoomKey, out _);
+            }
+        }
+
+        private static bool IsLiveRoomWindowOpening(string liveRoomKey)
+        {
+            if (string.IsNullOrWhiteSpace(liveRoomKey))
+            {
+                return false;
+            }
+
+            if (!OpeningLiveRoomWindows.TryGetValue(liveRoomKey, out var openingAt))
+            {
+                return false;
+            }
+
+            var isOpening = (DateTimeOffset.UtcNow - openingAt) < LiveRoomWindowOpenThrottle;
+            if (!isOpening)
+            {
+                OpeningLiveRoomWindows.TryRemove(liveRoomKey, out _);
+            }
+            return isOpening;
+        }
+
+        private static void ClearLiveRoomWindowOpening(string liveRoomKey)
+        {
+            if (string.IsNullOrWhiteSpace(liveRoomKey))
+            {
+                return;
+            }
+            OpeningLiveRoomWindows.TryRemove(liveRoomKey, out _);
         }
     }
     class BlankPage : Page { }

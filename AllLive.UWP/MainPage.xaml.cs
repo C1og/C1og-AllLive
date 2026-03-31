@@ -119,13 +119,9 @@ namespace AllLive.UWP
             var parseResult = await SiteParser.ParseUrl(url);
             if (parseResult.Item1 != LiveSite.Unknown && !string.IsNullOrEmpty(parseResult.Item2))
             {
-                this.Frame.Navigate(typeof(LiveRoomPage), new PageArgs()
+                MessageCenter.OpenLiveRoom(MainVM.Sites[(int)parseResult.Item1].LiveSite, new LiveRoomItem()
                 {
-                    Site = MainVM.Sites[(int)parseResult.Item1].LiveSite,
-                    Data = new LiveRoomItem()
-                    {
-                        RoomID = parseResult.Item2,
-                    }
+                    RoomID = parseResult.Item2,
                 });
                 return true;
             }
