@@ -190,11 +190,22 @@ namespace AllLive.Core.Danmaku
             try
             {
                 var roomUserSeqMessage = DeserializeProto<RoomUserSeqMessage>(payload);
+                var onlineValue = roomUserSeqMessage.onlineUserForAnchor.ParseCountTextToLong()
+                    ?? roomUserSeqMessage.totalUserStr.ParseCountTextToLong()
+                    ?? roomUserSeqMessage.totalUser;
+                if (!onlineValue.HasValue && roomUserSeqMessage.Popularity.HasValue)
+                {
+                    onlineValue = roomUserSeqMessage.Popularity.Value;
+                }
+                if (!onlineValue.HasValue)
+                {
+                    return;
+                }
 
                 NewMessage?.Invoke(this, new LiveMessage()
                 {
                     Type = LiveMessageType.Online,
-                    Data = roomUserSeqMessage.totalUser,
+                    Data = onlineValue.Value,
                     Color = DanmakuColor.White,
                     Message = "",
                     UserName = "",

@@ -158,6 +158,10 @@ namespace AllLive.Core
             var popularity = roomInfo["online"].ParseCountTextToLong() ?? 0;
             var isLive = roomInfo["live_status"].ToInt32() == 1;
             var viewerCount = TryGetViewerCountFromApi(obj["data"]);
+            if (!viewerCount.HasValue)
+            {
+                viewerCount = await TryGetViewerCountByUid(obj["data"]["anchor_info"]?["base_info"]?["uid"].ToString());
+            }
             if (!viewerCount.HasValue && isLive)
             {
                 viewerCount = await TryGetViewerCountFromHtml(roomId.ToString());
@@ -199,6 +203,26 @@ namespace AllLive.Core
                 ?? data["room_info"]?["watched_show"]?["num"].ParseCountTextToLong()
                 ?? data["room_info"]?["watched_show"]?["text_small"].ParseCountTextToLong()
                 ?? data["room_info"]?["watched_show"]?["text_large"].ParseCountTextToLong();
+        }
+
+        private async Task<long?> TryGetViewerCountByUid(string uid)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(uid))
+                {
+                    return null;
+                }
+
+                var result = await HttpUtil.GetString($"https://api.live.bilibili.com/room/v1/Room/get_status_info_by_uids?uids[]={uid}", headers: await GetRequestHeader());
+                var obj = JObject.Parse(result);
+                return obj["data"]?[uid]?["online"].ParseCountTextToLong();
+            }
+            catch (Exception ex)
+            {
+                CoreDebug.Log($"[Bilibili] 通过uid读取在线人数失败 uid={uid} err={ex.GetType().FullName}: {ex.Message}");
+                return null;
+            }
         }
 
         private async Task<long?> TryGetViewerCountFromHtml(string roomId)
