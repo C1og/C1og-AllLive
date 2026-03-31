@@ -810,7 +810,10 @@
                                             Margin="0,4,0,0"
                                             FontSize="14"
                                             Text="{x:Bind Path=liveRoomVM.Name, Mode=OneWay}" />
-                                        <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+                                        <StackPanel
+                                            HorizontalAlignment="Right"
+                                            Orientation="Horizontal"
+                                            ToolTipService.ToolTip="{x:Bind Path=liveRoomVM.AudienceMetricToolTip, Mode=OneWay}">
                                             <Viewbox Width="14" VerticalAlignment="Center">
                                                 <PathIcon Data="{StaticResource ResourceKey=IconHot}" Foreground="Orange" />
                                             </Viewbox>
@@ -1003,7 +1006,10 @@
                                 Text="{x:Bind Path=liveRoomVM.SiteName, Mode=OneWay}" />
                         </StackPanel>
                     </StackPanel>
-                    <StackPanel Grid.Column="2" Orientation="Horizontal">
+                    <StackPanel
+                        Grid.Column="2"
+                        Orientation="Horizontal"
+                        ToolTipService.ToolTip="{x:Bind Path=liveRoomVM.AudienceMetricToolTip, Mode=OneWay}">
                         <Viewbox Width="14" VerticalAlignment="Center">
                             <PathIcon Data="{StaticResource ResourceKey=IconHot}" Foreground="Orange" />
                         </Viewbox>

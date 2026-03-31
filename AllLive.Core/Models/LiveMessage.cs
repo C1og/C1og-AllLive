@@ -17,7 +17,7 @@ namespace AllLive.Core.Models
         /// </summary>
         Gift,
         /// <summary>
-        /// 在线人数
+        /// 房间统计值
         /// </summary>
         Online,
         /// <summary>
@@ -41,7 +41,7 @@ namespace AllLive.Core.Models
         public string Message { get; set; }
         /// <summary>
         /// 数据
-        /// 单Type=Online时，Data为人气值(long)
+        /// 单Type=Online时，Data 为房间统计值(long)，具体语义由平台决定
         /// </summary>
         public object Data { get; set; }
         /// <summary>

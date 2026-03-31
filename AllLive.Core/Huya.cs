@@ -217,6 +217,8 @@ namespace AllLive.Core
             {
                 Cover = jsonObj["roomInfo"]["tLiveInfo"]["sScreenshot"].ToString(),
                 Online = jsonObj["roomInfo"]["tLiveInfo"]["lTotalCount"].ToInt32(),
+                Popularity = jsonObj["roomInfo"]["tLiveInfo"]["lTotalCount"].ParseCountTextToLong(),
+                ViewerCount = TryGetViewerCount(jsonObj["roomInfo"]),
                 RoomID = realRoomId.ToString(),
                 Title = title,
                 UserName = jsonObj["roomInfo"]["tProfileInfo"]["sNick"].ToString(),
@@ -239,6 +241,20 @@ namespace AllLive.Core
                 ),
                 Url = "https://www.huya.com/" + roomId
             };
+        }
+
+        private static long? TryGetViewerCount(JToken roomInfo)
+        {
+            if (roomInfo == null)
+            {
+                return null;
+            }
+
+            return roomInfo["tLiveInfo"]?["viewerCount"].ParseCountTextToLong()
+                ?? roomInfo["tLiveInfo"]?["realTotalCount"].ParseCountTextToLong()
+                ?? roomInfo["tLiveInfo"]?["totalCount"].ParseCountTextToLong()
+                ?? roomInfo["tLiveInfo"]?["watchCount"].ParseCountTextToLong()
+                ?? roomInfo["tLiveInfo"]?["attendeeCount"].ParseCountTextToLong();
         }
 
         private async Task<JToken> GetRoomInfo(object roomId)

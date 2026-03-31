@@ -66,7 +66,7 @@ namespace AllLive.UWP.ViewModels
         public string SiteName
         {
             get { return _siteName; }
-            set { _siteName = value; DoPropertyChanged("SiteName"); }
+            set { _siteName = value; DoPropertyChanged("SiteName"); DoPropertyChanged(nameof(AudienceMetricToolTip)); }
         }
 
         private bool _isFavorite = false;
@@ -86,6 +86,107 @@ namespace AllLive.UWP.ViewModels
         {
             get { return _Online; }
             set { _Online = value; DoPropertyChanged("Online"); }
+        }
+
+        private long? _viewerCount;
+        public long? ViewerCount
+        {
+            get { return _viewerCount; }
+            private set
+            {
+                if (_viewerCount == value)
+                {
+                    return;
+                }
+                _viewerCount = value;
+                DoPropertyChanged(nameof(ViewerCount));
+                RefreshAudienceDisplay();
+            }
+        }
+
+        private long? _popularity;
+        public long? Popularity
+        {
+            get { return _popularity; }
+            private set
+            {
+                if (_popularity == value)
+                {
+                    return;
+                }
+                _popularity = value;
+                DoPropertyChanged(nameof(Popularity));
+                RefreshAudienceDisplay();
+            }
+        }
+
+        public string AudienceMetricToolTip
+        {
+            get
+            {
+                if (ViewerCount.HasValue)
+                {
+                    return "当前显示: 直播间在线人数";
+                }
+                if (Popularity.HasValue)
+                {
+                    if (SiteName == "抖音直播" && Living)
+                    {
+                        return "当前显示: 人气/热度，弹幕连接成功后会自动切换为在线人数";
+                    }
+                    return "当前显示: 人气/热度；该平台暂未接入或尚未确认真实在线人数接口";
+                }
+                return "当前显示: 未知";
+            }
+        }
+
+        private void RefreshAudienceDisplay()
+        {
+            var display = ViewerCount ?? Popularity ?? 0;
+            if (_Online != display)
+            {
+                _Online = display;
+                DoPropertyChanged(nameof(Online));
+            }
+            DoPropertyChanged(nameof(AudienceMetricToolTip));
+        }
+
+        private void ApplyAudienceMetrics(LiveRoomDetail roomDetail)
+        {
+            if (roomDetail == null)
+            {
+                ViewerCount = null;
+                Popularity = null;
+                return;
+            }
+
+            ViewerCount = roomDetail.ViewerCount;
+            Popularity = roomDetail.Popularity;
+            if (!ViewerCount.HasValue && !Popularity.HasValue && roomDetail.Online > 0)
+            {
+                Popularity = roomDetail.Online;
+            }
+        }
+
+        private void ApplyAudienceMetricUpdate(long value)
+        {
+            switch (SiteName)
+            {
+                case "抖音直播":
+                    ViewerCount = value;
+                    if (detail != null)
+                    {
+                        detail.ViewerCount = value;
+                    }
+                    break;
+                default:
+                    Popularity = value;
+                    if (detail != null)
+                    {
+                        detail.Popularity = value;
+                    }
+                    break;
+            }
         }
         private string _RoomID;
 
@@ -120,7 +221,7 @@ namespace AllLive.UWP.ViewModels
         public bool Living
         {
             get { return _living; }
-            set { _living = value; DoPropertyChanged("Living"); }
+            set { _living = value; DoPropertyChanged("Living"); DoPropertyChanged(nameof(AudienceMetricToolTip)); }
         }
 
 
@@ -259,7 +360,7 @@ namespace AllLive.UWP.ViewModels
                 detail = result;
                 RoomID = result.RoomID;
 
-                Online = result.Online;
+                ApplyAudienceMetrics(result);
                 Title = result.Title;
                 SetWindowTitle();
 
@@ -772,7 +873,7 @@ namespace AllLive.UWP.ViewModels
             {
                 if (e.Type == LiveMessageType.Online)
                 {
-                    Online = Convert.ToInt64(e.Data);
+                    ApplyAudienceMetricUpdate(Convert.ToInt64(e.Data));
                     return;
                 }
                 if (e.Type == LiveMessageType.SuperChat)

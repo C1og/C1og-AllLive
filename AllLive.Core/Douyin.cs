@@ -311,8 +311,10 @@ namespace AllLive.Core
                 UserName = owner["nickname"].ToString(),
                 UserAvatar = owner["avatar_thumb"]["url_list"][0].ToString(),
                 Online = roomStatus
-                  ? (room["room_view_stats"]?["display_value"]?.ToObject<int>() ?? 0)
+                  ? (int)(TryGetDouyinPopularity(room) ?? 0)
                   : 0,
+                Popularity = roomStatus ? TryGetDouyinPopularity(room) : null,
+                ViewerCount = roomStatus ? TryGetDouyinViewerCount(room) : null,
                 Status = roomStatus,
                 Url = $"https://live.douyin.com/{webRid}",
                 Introduction = owner?["signature"]?.ToString() ?? "",
@@ -384,8 +386,10 @@ namespace AllLive.Core
                     ? owner["avatar_thumb"]["url_list"][0].ToString()
                     : userData["avatar_thumb"]["url_list"][0].ToString(),
                 Online = roomStatus
-                    ? (roomData["room_view_stats"]?["display_value"]?.ToObject<int>() ?? 0)
+                    ? (int)(TryGetDouyinPopularity(roomData) ?? 0)
                     : 0,
+                Popularity = roomStatus ? TryGetDouyinPopularity(roomData) : null,
+                ViewerCount = roomStatus ? TryGetDouyinViewerCount(roomData) : null,
                 Status = roomStatus,
                 Url = $"https://live.douyin.com/{webRid}",
                 Introduction = owner?["signature"]?.ToString() ?? "",
@@ -428,8 +432,10 @@ namespace AllLive.Core
                     ? owner["avatar_thumb"]["url_list"][0].ToString()
                     : anchor["avatar_thumb"]["url_list"][0].ToString(),
                 Online = roomStatus
-                    ? (room["room_view_stats"]?["display_value"]?.ToObject<int>() ?? 0)
+                    ? (int)(TryGetDouyinPopularity(room) ?? 0)
                     : 0,
+                Popularity = roomStatus ? TryGetDouyinPopularity(room) : null,
+                ViewerCount = roomStatus ? TryGetDouyinViewerCount(room) : null,
                 Status = roomStatus,
                 Url = $"https://live.douyin.com/{webRid}",
                 Introduction = owner?["signature"]?.ToString() ?? "",
@@ -443,6 +449,30 @@ namespace AllLive.Core
                 },
                 Data = roomStatus ? room["stream_url"] : null,
             };
+        }
+
+        private static long? TryGetDouyinPopularity(JToken room)
+        {
+            if (room == null)
+            {
+                return null;
+            }
+
+            return room["room_view_stats"]?["display_value"].ParseCountTextToLong()
+                ?? room["popularity"].ParseCountTextToLong();
+        }
+
+        private static long? TryGetDouyinViewerCount(JToken room)
+        {
+            if (room == null)
+            {
+                return null;
+            }
+
+            return room["stats"]?["total_user"].ParseCountTextToLong()
+                ?? room["room_view_stats"]?["total_user"].ParseCountTextToLong()
+                ?? room["room_view_stats"]?["user_count"].ParseCountTextToLong()
+                ?? room["total_user"].ParseCountTextToLong();
         }
         /// <summary>
         ///  进入直播间前需要先获取cookie

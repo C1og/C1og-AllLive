@@ -124,6 +124,8 @@ namespace AllLive.Core
             {
                 Cover = roomInfo["room_pic"].ToString(),
                 Online = ParseHotNum(roomInfo["room_biz_all"]["hot"].ToString()),
+                Popularity = ParseHotNum(roomInfo["room_biz_all"]["hot"].ToString()),
+                ViewerCount = TryGetViewerCount(roomInfo),
                 RoomID = roomInfo["room_id"].ToString(),
                 Title = roomInfo["room_name"].ToString(),
                 UserName = roomInfo["owner_name"].ToString(),
@@ -136,6 +138,22 @@ namespace AllLive.Core
                 Url = "https://www.douyu.com/" + roomId,
                 IsRecord= roomInfo["videoLoop"].ToInt32() == 1,
             };
+        }
+
+        private static long? TryGetViewerCount(JToken roomInfo)
+        {
+            if (roomInfo == null)
+            {
+                return null;
+            }
+
+            return roomInfo["viewer_num"].ParseCountTextToLong()
+                ?? roomInfo["online"].ParseCountTextToLong()
+                ?? roomInfo["online_num"].ParseCountTextToLong()
+                ?? roomInfo["show_num"].ParseCountTextToLong()
+                ?? roomInfo["show_num_v2"].ParseCountTextToLong()
+                ?? roomInfo["room_biz_all"]?["viewer_num"].ParseCountTextToLong()
+                ?? roomInfo["room_biz_all"]?["online"].ParseCountTextToLong();
         }
 
 

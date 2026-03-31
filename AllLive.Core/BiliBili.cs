@@ -154,26 +154,79 @@ namespace AllLive.Core
             query = await GetWbiSign(query);
             var result = await HttpUtil.GetString($"{url}?{query}", headers: await GetRequestHeader());
             var obj = JObject.Parse(result);
+            var roomInfo = obj["data"]["room_info"];
+            var popularity = roomInfo["online"].ParseCountTextToLong() ?? 0;
+            var isLive = roomInfo["live_status"].ToInt32() == 1;
+            var viewerCount = TryGetViewerCountFromApi(obj["data"]);
+            if (!viewerCount.HasValue && isLive)
+            {
+                viewerCount = await TryGetViewerCountFromHtml(roomId.ToString());
+            }
 
             return new LiveRoomDetail()
             {
-                Cover = obj["data"]["room_info"]["cover"].ToString(),
-                Online = obj["data"]["room_info"]["online"].ToInt32(),
-                RoomID = obj["data"]["room_info"]["room_id"].ToString(),
-                Title = obj["data"]["room_info"]["title"].ToString(),
+                Cover = roomInfo["cover"].ToString(),
+                Online = popularity > int.MaxValue ? int.MaxValue : (int)popularity,
+                Popularity = popularity,
+                ViewerCount = viewerCount,
+                RoomID = roomInfo["room_id"].ToString(),
+                Title = roomInfo["title"].ToString(),
                 UserName = obj["data"]["anchor_info"]["base_info"]["uname"].ToString(),
-                Introduction = obj["data"]["room_info"]["description"].ToString(),
+                Introduction = roomInfo["description"].ToString(),
                 UserAvatar = obj["data"]["anchor_info"]["base_info"]["face"].ToString() + "@100w.jpg",
                 Notice = "",
-                Status = obj["data"]["room_info"]["live_status"].ToInt32() == 1,
+                Status = isLive,
                 DanmakuData = new BiliDanmakuArgs()
                 {
-                    RoomId = obj["data"]["room_info"]["room_id"].ToInt32(),
+                    RoomId = roomInfo["room_id"].ToInt32(),
                     UserId = UserId,
                     Cookie = GetCookie(),
                 },
                 Url = "https://live.bilibili.com/" + roomId
             };
+        }
+
+        private static long? TryGetViewerCountFromApi(JToken data)
+        {
+            if (data == null)
+            {
+                return null;
+            }
+
+            return data["watched_show"]?["num"].ParseCountTextToLong()
+                ?? data["watched_show"]?["text_small"].ParseCountTextToLong()
+                ?? data["watched_show"]?["text_large"].ParseCountTextToLong()
+                ?? data["room_info"]?["watched_show"]?["num"].ParseCountTextToLong()
+                ?? data["room_info"]?["watched_show"]?["text_small"].ParseCountTextToLong()
+                ?? data["room_info"]?["watched_show"]?["text_large"].ParseCountTextToLong();
+        }
+
+        private async Task<long?> TryGetViewerCountFromHtml(string roomId)
+        {
+            try
+            {
+                var html = await HttpUtil.GetString($"https://live.bilibili.com/{roomId}", headers: await GetRequestHeader());
+                if (string.IsNullOrWhiteSpace(html))
+                {
+                    return null;
+                }
+
+                var watchedShowJson = html.MatchTextSingleline(@"""watched_show"":(\{.*?\})", "");
+                if (string.IsNullOrWhiteSpace(watchedShowJson))
+                {
+                    return null;
+                }
+
+                var watchedShow = JObject.Parse(watchedShowJson);
+                return watchedShow["num"].ParseCountTextToLong()
+                    ?? watchedShow["text_small"].ParseCountTextToLong()
+                    ?? watchedShow["text_large"].ParseCountTextToLong();
+            }
+            catch (Exception ex)
+            {
+                CoreDebug.Log($"[Bilibili] 读取观看人数失败 roomId={roomId} err={ex.GetType().FullName}: {ex.Message}");
+                return null;
+            }
         }
         public async Task<LiveSearchResult> Search(string keyword, int page = 1)
         {
