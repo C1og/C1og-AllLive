@@ -39,6 +39,14 @@ namespace AllLive.Core.Models
         /// </summary>
         public long? Popularity { get; set; }
         /// <summary>
+        /// 在线人数来源
+        /// </summary>
+        public string ViewerCountSource { get; set; }
+        /// <summary>
+        /// 人气/热度来源
+        /// </summary>
+        public string PopularitySource { get; set; }
+        /// <summary>
         /// 房间介绍
         /// </summary>
         public string Introduction { get; set; }

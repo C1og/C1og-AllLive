@@ -16,6 +16,7 @@ using System.ComponentModel;
 using System.Timers;
 using Windows.Foundation;
 using System.Reflection;
+using System.Threading;
 
 namespace AllLive.UWP.ViewModels
 {
@@ -24,6 +25,23 @@ namespace AllLive.UWP.ViewModels
         SettingVM settingVM;
         public event EventHandler<string> ChangedPlayUrl;
         public event EventHandler<LiveMessage> AddDanmaku;
+        public event EventHandler<ReconnectStatus> ReconnectStatusChanged;
+
+        private bool isActive;
+        private CancellationTokenSource danmakuReconnectCts;
+        private int danmakuReconnectAttempt;
+        private int reconnectInProgress;
+        private object danmakuArgs;
+        private static readonly TimeSpan[] DanmakuReconnectDelays = new[]
+        {
+            TimeSpan.FromSeconds(2),
+            TimeSpan.FromSeconds(5),
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(20),
+            TimeSpan.FromSeconds(30),
+            TimeSpan.FromSeconds(30),
+        };
+        private const int MaxDanmakuReconnectAttempts = 6;
         public LiveRoomVM(SettingVM settingVM)
         {
             this.settingVM = settingVM;
@@ -354,6 +372,10 @@ namespace AllLive.UWP.ViewModels
             try
             {
                 Loading = true;
+                isActive = true;
+                danmakuReconnectAttempt = 0;
+                Interlocked.Exchange(ref reconnectInProgress, 0);
+                CancelDanmakuReconnect();
                 Site = site;
 
                 RoomId = roomId;
@@ -389,6 +411,7 @@ namespace AllLive.UWP.ViewModels
 
                 LiveDanmaku.NewMessage += LiveDanmaku_NewMessage;
                 LiveDanmaku.OnClose += LiveDanmaku_OnClose;
+                danmakuArgs = result.DanmakuData;
                 await LiveDanmaku.Start(result.DanmakuData);
                 if (detail.Status)
                 {
@@ -864,7 +887,161 @@ namespace AllLive.UWP.ViewModels
                 {
                     Type = LiveMessageType.Chat,
                     UserName = "系统",
-                    Message = "连接已经关闭"
+                    Message = string.IsNullOrEmpty(e) ? "弹幕连接已断开" : $"弹幕连接已断开: {e}"
+                });
+            });
+
+            if (!isActive)
+            {
+                return;
+            }
+
+            if (Interlocked.CompareExchange(ref reconnectInProgress, 1, 0) != 0)
+            {
+                return;
+            }
+
+            _ = ReconnectDanmakuAsync();
+        }
+
+        private async Task ReconnectDanmakuAsync()
+        {
+            CancelDanmakuReconnect();
+            var cts = new CancellationTokenSource();
+            danmakuReconnectCts = cts;
+            var token = cts.Token;
+
+            try
+            {
+                while (isActive && !token.IsCancellationRequested)
+                {
+                    if (danmakuReconnectAttempt >= MaxDanmakuReconnectAttempts)
+                    {
+                        await Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
+                        {
+                            Messages.Add(new LiveMessage()
+                            {
+                                Type = LiveMessageType.Chat,
+                                UserName = "系统",
+                                Message = "弹幕重连已达上限，请手动刷新"
+                            });
+                        });
+                        RaiseReconnectStatus("弹幕", false, danmakuReconnectAttempt, MaxDanmakuReconnectAttempts, "弹幕重连失败");
+                        return;
+                    }
+
+                    var delay = DanmakuReconnectDelays[Math.Min(danmakuReconnectAttempt, DanmakuReconnectDelays.Length - 1)];
+                    danmakuReconnectAttempt++;
+                    RaiseReconnectStatus("弹幕", true, danmakuReconnectAttempt, MaxDanmakuReconnectAttempts,
+                        $"弹幕连接异常，{delay.TotalSeconds:F0}s 后重连 ({danmakuReconnectAttempt}/{MaxDanmakuReconnectAttempts})");
+                    try
+                    {
+                        await Task.Delay(delay, token);
+                    }
+                    catch (TaskCanceledException)
+                    {
+                        return;
+                    }
+                    if (!isActive || token.IsCancellationRequested)
+                    {
+                        return;
+                    }
+
+                    try
+                    {
+                        await CleanupOldDanmakuAsync();
+                        if (!isActive || token.IsCancellationRequested)
+                        {
+                            return;
+                        }
+
+                        LogHelper.Log($"弹幕重连: 站点={Site?.Name} 房间={RoomID} 第{danmakuReconnectAttempt}次", LogType.DEBUG);
+                        var newDanmaku = Site.GetDanmaku();
+                        newDanmaku.NewMessage += LiveDanmaku_NewMessage;
+                        newDanmaku.OnClose += LiveDanmaku_OnClose;
+                        LiveDanmaku = newDanmaku;
+                        await newDanmaku.Start(danmakuArgs);
+
+                        danmakuReconnectAttempt = 0;
+                        Interlocked.Exchange(ref reconnectInProgress, 0);
+                        await Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
+                        {
+                            Messages.Add(new LiveMessage()
+                            {
+                                Type = LiveMessageType.Chat,
+                                UserName = "系统",
+                                Message = "弹幕已重新连接"
+                            });
+                        });
+                        RaiseReconnectStatus("弹幕", false, 0, MaxDanmakuReconnectAttempts, "弹幕已重连");
+                        return;
+                    }
+                    catch (Exception ex)
+                    {
+                        LogHelper.Log($"弹幕重连失败(第{danmakuReconnectAttempt}次)", LogType.ERROR, ex);
+                    }
+                }
+            }
+            finally
+            {
+                if (danmakuReconnectCts == cts)
+                {
+                    danmakuReconnectCts = null;
+                }
+                cts.Dispose();
+                if (!isActive || token.IsCancellationRequested || danmakuReconnectAttempt >= MaxDanmakuReconnectAttempts)
+                {
+                    Interlocked.Exchange(ref reconnectInProgress, 0);
+                }
+            }
+        }
+
+        private async Task CleanupOldDanmakuAsync()
+        {
+            var old = LiveDanmaku;
+            if (old == null)
+            {
+                return;
+            }
+            old.NewMessage -= LiveDanmaku_NewMessage;
+            old.OnClose -= LiveDanmaku_OnClose;
+            LiveDanmaku = null;
+            try
+            {
+                await old.Stop();
+            }
+            catch
+            {
+            }
+        }
+
+        private void CancelDanmakuReconnect()
+        {
+            var cts = danmakuReconnectCts;
+            danmakuReconnectCts = null;
+            if (cts != null)
+            {
+                try { cts.Cancel(); } catch { }
+                try { cts.Dispose(); } catch { }
+            }
+        }
+
+        private void RaiseReconnectStatus(string source, bool inProgress, int attempt, int max, string message)
+        {
+            var handler = ReconnectStatusChanged;
+            if (handler == null)
+            {
+                return;
+            }
+            _ = Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
+            {
+                handler(this, new ReconnectStatus
+                {
+                    Source = source,
+                    IsReconnecting = inProgress,
+                    Attempt = attempt,
+                    MaxAttempt = max,
+                    Message = message
                 });
             });
         }
@@ -924,7 +1101,10 @@ namespace AllLive.UWP.ViewModels
                 sb.AppendLine($"开播状态: {roomDetail.Status}");
                 sb.AppendLine($"兼容显示值 Online: {roomDetail.Online}");
                 sb.AppendLine($"ViewerCount: {(roomDetail.ViewerCount.HasValue ? roomDetail.ViewerCount.Value.ToString() : "null")}");
+                sb.AppendLine($"ViewerCountSource: {roomDetail.ViewerCountSource ?? "null"}");
                 sb.AppendLine($"Popularity: {(roomDetail.Popularity.HasValue ? roomDetail.Popularity.Value.ToString() : "null")}");
+                sb.AppendLine($"PopularitySource: {roomDetail.PopularitySource ?? "null"}");
+                sb.AppendLine($"最终显示值 DisplayMetric: {(roomDetail.ViewerCount ?? roomDetail.Popularity ?? roomDetail.Online)}");
                 sb.AppendLine($"链接: {roomDetail.Url}");
                 if (!string.IsNullOrWhiteSpace(roomDetail.Introduction))
                 {
@@ -1102,12 +1282,22 @@ namespace AllLive.UWP.ViewModels
 
         public async void Stop()
         {
+            isActive = false;
+            CancelDanmakuReconnect();
+            Interlocked.Exchange(ref reconnectInProgress, 0);
+            danmakuReconnectAttempt = 0;
             Messages.Clear();
             if (LiveDanmaku != null)
             {
                 LiveDanmaku.NewMessage -= LiveDanmaku_NewMessage;
                 LiveDanmaku.OnClose -= LiveDanmaku_OnClose;
-                await LiveDanmaku.Stop();
+                try
+                {
+                    await LiveDanmaku.Stop();
+                }
+                catch
+                {
+                }
                 LiveDanmaku = null;
             }
 
@@ -1119,6 +1309,14 @@ namespace AllLive.UWP.ViewModels
         public string Name { get; set; }
         public string Url { get; set; }
         public string Codec { get; set; }
+    }
+    public class ReconnectStatus
+    {
+        public string Source { get; set; }
+        public bool IsReconnecting { get; set; }
+        public int Attempt { get; set; }
+        public int MaxAttempt { get; set; }
+        public string Message { get; set; }
     }
     public class SettingsItem<T>
     {

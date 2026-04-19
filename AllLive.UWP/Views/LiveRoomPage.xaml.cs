@@ -80,6 +80,24 @@ namespace AllLive.UWP.Views
         private static readonly TimeSpan BilibiliRetryWindow = TimeSpan.FromSeconds(45);
         private const string BilibiliPlaybackUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0";
 
+        private System.Threading.CancellationTokenSource streamReconnectCts;
+        private int streamReconnectAttempt;
+        private int streamReconnectLevel;
+        private int streamReconnectInProgress;
+        private bool isNetworkDown;
+        private DispatcherTimer bufferingTimer;
+        private static readonly TimeSpan[] StreamReconnectDelays = new[]
+        {
+            TimeSpan.FromSeconds(1),
+            TimeSpan.FromSeconds(2),
+            TimeSpan.FromSeconds(4),
+            TimeSpan.FromSeconds(8),
+            TimeSpan.FromSeconds(15),
+            TimeSpan.FromSeconds(15),
+        };
+        private const int MaxStreamReconnectAttempts = 6;
+        private static readonly TimeSpan BufferingTimeout = TimeSpan.FromSeconds(8);
+
         public LiveRoomPage()
         {
             this.InitializeComponent();
@@ -93,6 +111,7 @@ namespace AllLive.UWP.Views
           
             liveRoomVM.ChangedPlayUrl += LiveRoomVM_ChangedPlayUrl;
             liveRoomVM.AddDanmaku += LiveRoomVM_AddDanmaku;
+            liveRoomVM.ReconnectStatusChanged += LiveRoomVM_ReconnectStatusChanged;
             //每过2秒就设置焦点
             timer_focus = new DispatcherTimer() { Interval = TimeSpan.FromSeconds(2) };
             timer_focus.Tick += Timer_focus_Tick;
@@ -107,6 +126,11 @@ namespace AllLive.UWP.Views
             mediaPlayer.MediaOpened += MediaPlayer_MediaOpened;
             mediaPlayer.MediaEnded += MediaPlayer_MediaEnded;
             mediaPlayer.MediaFailed += MediaPlayer_MediaFailed;
+
+            bufferingTimer = new DispatcherTimer() { Interval = BufferingTimeout };
+            bufferingTimer.Tick += BufferingTimer_Tick;
+            NetworkInformation.NetworkStatusChanged += NetworkInformation_NetworkStatusChanged;
+            isNetworkDown = !IsNetworkConnected();
 
             timer_focus.Start();
             controlTimer.Start();
@@ -239,6 +263,7 @@ namespace AllLive.UWP.Views
             await this.Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, () =>
             {
                 PlayerLoading.Visibility = Visibility.Collapsed;
+                StopBufferingTimer();
             });
 
         }
@@ -257,6 +282,7 @@ namespace AllLive.UWP.Views
             {
                 PlayerLoading.Visibility = Visibility.Visible;
                 PlayerLoadText.Text = "缓冲中";
+                StartBufferingTimer();
             });
         }
 
@@ -282,6 +308,11 @@ namespace AllLive.UWP.Views
                 }
                 var mergedExtra = JoinNonEmpty(lastConfigSnapshot, lastUrlAnalysis, lastProbeSnapshot, extra.ToString().TrimEnd());
                 LogPlayError("播放器播放失败", args.ExtendedErrorCode, mergedExtra);
+
+                if (TryScheduleStreamReconnect($"MediaFailed/{args.Error}"))
+                {
+                    return;
+                }
                 PlayError();
             });
 
@@ -336,6 +367,8 @@ namespace AllLive.UWP.Views
                         dispRequest.RequestActive();
                         liveRoomVM.Living = true;
                         SetMediaInfo();
+                        ResetStreamReconnectState();
+                        StopBufferingTimer();
                         break;
                     case MediaPlaybackState.Paused:
                         PlayerLoading.Visibility = Visibility.Collapsed;
@@ -551,8 +584,215 @@ namespace AllLive.UWP.Views
 
         private void LiveRoomVM_ChangedPlayUrl(object sender, string e)
         {
+            ResetStreamReconnectState();
             _ = SetPlayer(e);
         }
+
+        private void LiveRoomVM_ReconnectStatusChanged(object sender, ReconnectStatus status)
+        {
+            if (status == null) return;
+            LogHelper.Log($"[重连状态] {status.Source} inProgress={status.IsReconnecting} {status.Attempt}/{status.MaxAttempt} {status.Message}", LogType.DEBUG);
+            // 流重连的 UI 文案由 ReconnectStreamAsync 自行更新；此处只处理弹幕提示
+            // 弹幕重连不强显 PlayerLoading（已有 Messages 系统消息），以避免遮挡直播画面
+        }
+
+        private bool IsNetworkConnected()
+        {
+            try
+            {
+                var profile = NetworkInformation.GetInternetConnectionProfile();
+                if (profile == null) return false;
+                return profile.GetNetworkConnectivityLevel() == NetworkConnectivityLevel.InternetAccess;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private async void NetworkInformation_NetworkStatusChanged(object sender)
+        {
+            var connected = IsNetworkConnected();
+            await this.Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
+            {
+                if (!connected)
+                {
+                    if (!isNetworkDown)
+                    {
+                        isNetworkDown = true;
+                        LogHelper.Log("网络已断开", LogType.DEBUG);
+                        PlayerLoading.Visibility = Visibility.Visible;
+                        PlayerLoadText.Text = "网络已断开，等待恢复...";
+                        StopBufferingTimer();
+                    }
+                }
+                else
+                {
+                    if (isNetworkDown)
+                    {
+                        isNetworkDown = false;
+                        LogHelper.Log("网络已恢复，触发重连", LogType.DEBUG);
+                        TryScheduleStreamReconnect("NetworkRestored");
+                    }
+                }
+            });
+        }
+
+        private void StartBufferingTimer()
+        {
+            if (bufferingTimer == null) return;
+            bufferingTimer.Stop();
+            bufferingTimer.Start();
+        }
+
+        private void StopBufferingTimer()
+        {
+            bufferingTimer?.Stop();
+        }
+
+        private void BufferingTimer_Tick(object sender, object e)
+        {
+            bufferingTimer.Stop();
+            var state = mediaPlayer?.PlaybackSession?.PlaybackState;
+            if (state == MediaPlaybackState.Buffering || state == MediaPlaybackState.Opening)
+            {
+                LogHelper.Log($"Buffering 超过 {BufferingTimeout.TotalSeconds:F0}s，触发流重连。State={state}", LogType.DEBUG);
+                TryScheduleStreamReconnect("BufferingTimeout");
+            }
+        }
+
+        private void ResetStreamReconnectState()
+        {
+            streamReconnectAttempt = 0;
+            streamReconnectLevel = 0;
+            CancelStreamReconnect();
+            System.Threading.Interlocked.Exchange(ref streamReconnectInProgress, 0);
+        }
+
+        private void CancelStreamReconnect()
+        {
+            var cts = streamReconnectCts;
+            streamReconnectCts = null;
+            if (cts != null)
+            {
+                try { cts.Cancel(); } catch { }
+                try { cts.Dispose(); } catch { }
+            }
+        }
+
+        private bool TryScheduleStreamReconnect(string reason)
+        {
+            if (liveRoomVM == null || liveRoomVM.Loading) return false;
+            if (liveRoomVM.CurrentLine == null || string.IsNullOrEmpty(liveRoomVM.CurrentLine.Url)) return false;
+            if (System.Threading.Interlocked.CompareExchange(ref streamReconnectInProgress, 1, 0) != 0)
+            {
+                return true;
+            }
+            _ = ReconnectStreamAsync(reason);
+            return true;
+        }
+
+        private async Task ReconnectStreamAsync(string reason)
+        {
+            CancelStreamReconnect();
+            var cts = new System.Threading.CancellationTokenSource();
+            streamReconnectCts = cts;
+            var token = cts.Token;
+
+            try
+            {
+                while (!token.IsCancellationRequested)
+                {
+                    if (streamReconnectAttempt >= MaxStreamReconnectAttempts)
+                    {
+                        PlayerLoadText.Text = "自动重连失败，请点击刷新重试";
+                        LogHelper.Log("流重连已达上限", LogType.ERROR);
+                        return;
+                    }
+
+                    var delay = StreamReconnectDelays[Math.Min(streamReconnectAttempt, StreamReconnectDelays.Length - 1)];
+                    streamReconnectAttempt++;
+                    var level = streamReconnectLevel;
+                    var levelText = level == 0 ? "重连当前线路" : level == 1 ? "刷新播放地址" : "重新加载直播间";
+                    PlayerLoading.Visibility = Visibility.Visible;
+                    PlayerLoadText.Text = $"直播流重连中 ({streamReconnectAttempt}/{MaxStreamReconnectAttempts})：{levelText}";
+                    LogHelper.Log($"流重连调度 reason={reason} attempt={streamReconnectAttempt} level={level} delay={delay.TotalSeconds}s", LogType.DEBUG);
+
+                    try { await Task.Delay(delay, token); }
+                    catch (TaskCanceledException) { return; }
+                    if (token.IsCancellationRequested) return;
+                    if (isNetworkDown) { continue; }
+
+                    bool actionSucceeded = false;
+                    try
+                    {
+                        if (level == 0)
+                        {
+                            var url = liveRoomVM?.CurrentLine?.Url;
+                            if (!string.IsNullOrEmpty(url))
+                            {
+                                await SetPlayer(url);
+                            }
+                        }
+                        else if (level == 1)
+                        {
+                            liveRoomVM.LoadPlayUrl();
+                        }
+                        else
+                        {
+                            if (pageArgs != null && !string.IsNullOrEmpty(liveRoomVM?.RoomID))
+                            {
+                                liveRoomVM.Stop();
+                                liveRoomVM.LoadData(pageArgs.Site, liveRoomVM.RoomID);
+                            }
+                        }
+
+                        // 每 2 次尝试升一级
+                        if (streamReconnectAttempt % 2 == 0 && streamReconnectLevel < 2)
+                        {
+                            streamReconnectLevel++;
+                        }
+                        actionSucceeded = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        LogHelper.Log($"流重连第{streamReconnectAttempt}次失败", LogType.ERROR, ex);
+                    }
+
+                    if (actionSucceeded)
+                    {
+                        // 等待 10s 让 action 生效：进入 Playing 会 Cancel token 并退出；否则继续 while 进入下一轮
+                        try
+                        {
+                            await Task.Delay(TimeSpan.FromSeconds(10), token);
+                        }
+                        catch (TaskCanceledException)
+                        {
+                            return;
+                        }
+                        if (token.IsCancellationRequested) return;
+                        var curState = mediaPlayer?.PlaybackSession?.PlaybackState;
+                        if (curState == MediaPlaybackState.Playing)
+                        {
+                            return;
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                if (streamReconnectCts == cts)
+                {
+                    streamReconnectCts = null;
+                }
+                cts.Dispose();
+                if (token.IsCancellationRequested || streamReconnectAttempt >= MaxStreamReconnectAttempts)
+                {
+                    System.Threading.Interlocked.Exchange(ref streamReconnectInProgress, 0);
+                }
+            }
+        }
+
         private string GetDecoderModeText()
         {
             var decoder = SettingHelper.GetValue<int>(SettingHelper.VIDEO_DECODER, 1);
@@ -1418,6 +1658,8 @@ namespace AllLive.UWP.Views
 
         private void StopPlay()
         {
+            ResetStreamReconnectState();
+            StopBufferingTimer();
             if (mediaPlayer != null)
             {
                 mediaPlayer.Pause();
@@ -1491,6 +1733,8 @@ namespace AllLive.UWP.Views
         {
 
             liveRoomVM.AddDanmaku -= LiveRoomVM_AddDanmaku;
+            liveRoomVM.ReconnectStatusChanged -= LiveRoomVM_ReconnectStatusChanged;
+            NetworkInformation.NetworkStatusChanged -= NetworkInformation_NetworkStatusChanged;
             StopPlay();
 
             Window.Current.CoreWindow.KeyDown -= CoreWindow_KeyDown;
@@ -2234,6 +2478,8 @@ namespace AllLive.UWP.Views
             if (liveRoomVM.Loading) return;
             currentLineRetryUrl = null;
             currentLineRetryCount = 0;
+            ResetStreamReconnectState();
+            StopBufferingTimer();
             if (mediaPlayer != null)
             {
                 mediaPlayer.Pause();
