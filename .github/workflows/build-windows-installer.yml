@@ -15,17 +15,17 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ env.TARGET_BRANCH }}
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/packages.lock.json', '**/*.csproj', '**/*.sln') }}
-          restore-keys: ${{ runner.os }}-nuget-
+          key: ${{ runner.os }}-${{ hashFiles('**/packages.lock.json', '**/*.csproj', '**/*.sln') }}
+          restore-keys: ${{ runner.os }}
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 8.0.x
 
@@ -60,6 +60,11 @@ jobs:
               if ($process.ExitCode -ne 0) { throw "Windows SDK installer failed with exit code $($process.ExitCode)" }
             }
           }
+          if (-not (Test-UwpReferences $sdkRefs)) {
+            "Windows SDK references still missing. Available references:"
+            Get-ChildItem -Path $sdkRefs -Directory -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+            throw "Windows SDK reference assemblies still missing under $sdkRefs"
+          }
 
       - name: Resolve Windows SDK version
         shell: pwsh
@@ -75,6 +80,29 @@ jobs:
           "WINDOWS_SDK_VERSION=$sdkVersion" | Out-File -FilePath $env:GITHUB_ENV -Append
           "WINDOWS_SDK_DIR=$sdkRoot\" | Out-File -FilePath $env:GITHUB_ENV -Append
 
+      - name: Diagnose UWP SDK and XAML targets
+        shell: pwsh
+        run: |
+          "VSInstallPath=$env:VSINSTALLPATH"
+          $xamlTargets = Get-ChildItem -Path $env:VSINSTALLPATH -Recurse -Filter Microsoft.Windows.UI.Xaml.CSharp.targets -ErrorAction SilentlyContinue | Select-Object -First 5
+          "WindowsXamlTargets:"
+          $xamlTargets.FullName
+          "ResolvedWindowsSdkDir=$env:WINDOWS_SDK_DIR"
+          "ResolvedWindowsSDKVersion=$env:WINDOWS_SDK_VERSION"
+          $sdkRoot = Join-Path "${env:ProgramFiles(x86)}" "Windows Kits\10"
+          if (Test-Path $sdkRoot) {
+            "WindowsSDKRoot=$sdkRoot"
+            Get-ChildItem -Path (Join-Path $sdkRoot "Lib") -ErrorAction SilentlyContinue | Select-Object -First 10 | ForEach-Object { $_.FullName }
+            $winmd = Get-ChildItem -Path $sdkRoot -Recurse -Filter Windows.winmd -ErrorAction SilentlyContinue | Select-Object -First 5
+            "WindowsWinmd:"
+            $winmd.FullName
+            $contractWinmd = Get-ChildItem -Path (Join-Path $sdkRoot "References") -Recurse -Filter Windows.Foundation.UniversalApiContract.winmd -ErrorAction SilentlyContinue | Select-Object -First 5
+            "UniversalApiContractWinmd:"
+            $contractWinmd.FullName
+          } else {
+            "WindowsSDKRoot not found."
+          }
+
       - name: Restore and Build
         shell: pwsh
         env:
@@ -86,7 +114,10 @@ jobs:
 
           $env:WindowsSdkDir = $env:WINDOWS_SDK_DIR
           $env:WindowsSDKVersion = "$env:WINDOWS_SDK_VERSION\"
-          
+          $env:MSBuildExtensionsPath = Join-Path $env:VSINSTALLPATH "MSBuild"
+          $env:MSBuildExtensionsPath32 = $env:MSBuildExtensionsPath
+          $env:MSBuildExtensionsPath64 = $env:MSBuildExtensionsPath
+
           $signingArgs = @()
           $certificatePath = $null
           $certExportPath = $null
@@ -99,7 +130,9 @@ jobs:
               [xml]$manifest = Get-Content $manifestPath
               $publisher = $manifest.Package.Identity.Publisher
             }
-            if ([string]::IsNullOrWhiteSpace($publisher)) { $publisher = "CN=AllLive" }
+            if ([string]::IsNullOrWhiteSpace($publisher)) {
+              $publisher = "CN=AllLive"
+            }
 
             if ([string]::IsNullOrWhiteSpace($env:KEYSTORE_BASE64) -or [string]::IsNullOrWhiteSpace($env:KEY_PASSWORD)) {
               Write-Host "No signing secrets provided; generating a self-signed certificate."
@@ -112,17 +145,33 @@ jobs:
               Export-Certificate -Cert $cert -FilePath $certExportPath | Out-Null
             } else {
               $certificatePath = Join-Path -Path $env:RUNNER_TEMP -ChildPath "CustomCertificate.pfx"
+              Write-Host "Writing temporary certificate file..."
               $pfx_cert_byte = [System.Convert]::FromBase64String($env:KEYSTORE_BASE64)
               [IO.File]::WriteAllBytes($certificatePath, $pfx_cert_byte)
-              $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($certificatePath, $env:KEY_PASSWORD)
+
+              Write-Host "Reading certificate information..."
+              $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2(
+                $certificatePath,
+                $env:KEY_PASSWORD,
+                [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable
+              )
+              Write-Host "Subject: $($cert.Subject)"
+              Write-Host "Thumbprint: $($cert.Thumbprint)"
               $certificatePassword = $env:KEY_PASSWORD
               $certExportPath = Join-Path -Path $env:RUNNER_TEMP -ChildPath "AllLive.cer"
-              [IO.File]::WriteAllBytes($certExportPath, $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
+              $cerBytes = $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)
+              [IO.File]::WriteAllBytes($certExportPath, $cerBytes)
             }
 
             $signingArgs += "/p:AppxPackageSigningEnabled=true"
+            $signingArgs += "/p:GenerateTemporaryStoreCertificate=false"
             $signingArgs += "/p:PackageCertificateKeyFile=$certificatePath"
             $signingArgs += "/p:PackageCertificatePassword=$certificatePassword"
+            $signingArgs += "/p:PackageCertificateThumbprint=$($cert.Thumbprint)"
+            $signingArgs += "/p:PackagePublisher=$($cert.Subject)"
+
+            $windowsSdkVersion = "$env:WINDOWS_SDK_VERSION"
+            $windowsSdkVersionWithSlash = "$env:WINDOWS_SDK_VERSION\"
 
             $args = @(
               "AllLive.UWP\AllLive.UWP.csproj",
@@ -131,29 +180,43 @@ jobs:
               "/p:Platform=x64",
               "/p:AppxBundle=Always",
               "/p:AppxBundlePlatforms=x64",
-              "/p:TargetPlatformVersion=$env:WINDOWS_SDK_VERSION",
+              "/p:TargetPlatformVersion=$windowsSdkVersion",
+              "/p:TargetPlatformMinVersion=10.0.18362.0",
               "/p:UapAppxPackageBuildMode=SideloadOnly",
+              "/p:VisualStudioVersion=17.0",
               "/p:WindowsSdkDir=$env:WINDOWS_SDK_DIR",
-              "/p:WindowsSDKVersion=$($env:WINDOWS_SDK_VERSION)\",
+              "/p:WindowsSDKVersion=$windowsSdkVersionWithSlash",
               "/p:AppxPackageDir=AppPackages\\"
             ) + $signingArgs
 
             & $msbuild @args
-            
-            # 复制证书到输出目录
+            if ($LASTEXITCODE -ne 0) { throw "MSBuild failed with exit code $LASTEXITCODE" }
+
             if ($certExportPath -and (Test-Path $certExportPath)) {
               $appPackagesDir = Join-Path -Path $PWD -ChildPath "AllLive.UWP\AppPackages"
+              if (-not (Test-Path $appPackagesDir)) {
+                New-Item -ItemType Directory -Path $appPackagesDir -Force | Out-Null
+              }
               Copy-Item -Path $certExportPath -Destination (Join-Path $appPackagesDir "AllLive.cer") -Force
             }
           }
           finally {
-            if ($certificatePath -and (Test-Path $certificatePath)) { Remove-Item -Path $certificatePath -Force }
+            if ($certificatePath -and (Test-Path $certificatePath)) {
+              Write-Host "Cleaning up temporary certificate file..."
+              Remove-Item -Path $certificatePath -Force
+            }
           }
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        if: always()
+        uses: actions/upload-artifact@v6
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
         with:
           name: AllLive-UWP-Packages
-          path: AllLive.UWP/AppPackages/
-          if-no-files-found: warn
+          path: AllLive.UWP/AppPackages/**
+
+      - name: Generate Commit SHA
+        if: github.event_name == 'workflow_dispatch'
+        id: sha
+        run: |
+          echo "full_sha=$(git rev-parse HEAD)" >> $env:GITHUB_OUTPUT
+          echo "short_sha=$(git rev-parse --short HEAD)" >> $env:GITHUB_OUTPUT
