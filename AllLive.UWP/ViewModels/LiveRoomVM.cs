@@ -16,7 +16,6 @@ using System.ComponentModel;
 using System.Timers;
 using Windows.Foundation;
 using System.Reflection;
-using System.Threading;
 
 namespace AllLive.UWP.ViewModels
 {
@@ -28,7 +27,7 @@ namespace AllLive.UWP.ViewModels
         public event EventHandler<ReconnectStatus> ReconnectStatusChanged;
 
         private bool isActive;
-        private CancellationTokenSource danmakuReconnectCts;
+        private System.Threading.CancellationTokenSource danmakuReconnectCts;
         private int danmakuReconnectAttempt;
         private int reconnectInProgress;
         private object danmakuArgs;
@@ -374,7 +373,7 @@ namespace AllLive.UWP.ViewModels
                 Loading = true;
                 isActive = true;
                 danmakuReconnectAttempt = 0;
-                Interlocked.Exchange(ref reconnectInProgress, 0);
+                System.Threading.Interlocked.Exchange(ref reconnectInProgress, 0);
                 CancelDanmakuReconnect();
                 Site = site;
 
@@ -896,7 +895,7 @@ namespace AllLive.UWP.ViewModels
                 return;
             }
 
-            if (Interlocked.CompareExchange(ref reconnectInProgress, 1, 0) != 0)
+            if (System.Threading.Interlocked.CompareExchange(ref reconnectInProgress, 1, 0) != 0)
             {
                 return;
             }
@@ -907,7 +906,7 @@ namespace AllLive.UWP.ViewModels
         private async Task ReconnectDanmakuAsync()
         {
             CancelDanmakuReconnect();
-            var cts = new CancellationTokenSource();
+            var cts = new System.Threading.CancellationTokenSource();
             danmakuReconnectCts = cts;
             var token = cts.Token;
 
@@ -963,7 +962,7 @@ namespace AllLive.UWP.ViewModels
                         await newDanmaku.Start(danmakuArgs);
 
                         danmakuReconnectAttempt = 0;
-                        Interlocked.Exchange(ref reconnectInProgress, 0);
+                        System.Threading.Interlocked.Exchange(ref reconnectInProgress, 0);
                         await Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
                         {
                             Messages.Add(new LiveMessage()
@@ -991,7 +990,7 @@ namespace AllLive.UWP.ViewModels
                 cts.Dispose();
                 if (!isActive || token.IsCancellationRequested || danmakuReconnectAttempt >= MaxDanmakuReconnectAttempts)
                 {
-                    Interlocked.Exchange(ref reconnectInProgress, 0);
+                    System.Threading.Interlocked.Exchange(ref reconnectInProgress, 0);
                 }
             }
         }
@@ -1284,7 +1283,7 @@ namespace AllLive.UWP.ViewModels
         {
             isActive = false;
             CancelDanmakuReconnect();
-            Interlocked.Exchange(ref reconnectInProgress, 0);
+            System.Threading.Interlocked.Exchange(ref reconnectInProgress, 0);
             danmakuReconnectAttempt = 0;
             Messages.Clear();
             if (LiveDanmaku != null)
