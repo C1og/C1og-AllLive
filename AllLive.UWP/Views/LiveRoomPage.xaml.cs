@@ -86,6 +86,12 @@ namespace AllLive.UWP.Views
         private int streamReconnectInProgress;
         private bool isNetworkDown;
         private DispatcherTimer bufferingTimer;
+        private readonly object setPlayerRequestLock = new object();
+        private bool setPlayerWorkerRunning;
+        private string activeSetPlayerUrl;
+        private DateTimeOffset activeSetPlayerUtc;
+        private string pendingSetPlayerUrl;
+        private DateTimeOffset pendingSetPlayerUtc;
         private static readonly TimeSpan[] StreamReconnectDelays = new[]
         {
             TimeSpan.FromSeconds(1),
@@ -97,6 +103,7 @@ namespace AllLive.UWP.Views
         };
         private const int MaxStreamReconnectAttempts = 6;
         private static readonly TimeSpan BufferingTimeout = TimeSpan.FromSeconds(8);
+        private static readonly TimeSpan DuplicateSetPlayerWindow = TimeSpan.FromSeconds(2);
 
         public LiveRoomPage()
         {
@@ -238,6 +245,10 @@ namespace AllLive.UWP.Views
                     LogHelper.Log(earlyProbe, LogType.DEBUG);
                 }
                 if (TryRefreshHuyaPlayUrls("播放结束"))
+                {
+                    return;
+                }
+                if (TryFallbackBilibiliCodec("播放结束"))
                 {
                     return;
                 }
@@ -585,7 +596,7 @@ namespace AllLive.UWP.Views
         private void LiveRoomVM_ChangedPlayUrl(object sender, string e)
         {
             ResetStreamReconnectState();
-            _ = SetPlayer(e);
+            QueueSetPlayer(e, "ChangedPlayUrl");
         }
 
         private void LiveRoomVM_ReconnectStatusChanged(object sender, ReconnectStatus status)
@@ -669,6 +680,100 @@ namespace AllLive.UWP.Views
             System.Threading.Interlocked.Exchange(ref streamReconnectInProgress, 0);
         }
 
+        private void QueueSetPlayer(string url, string source)
+        {
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                return;
+            }
+
+            bool startWorker = false;
+            var now = DateTimeOffset.UtcNow;
+            lock (setPlayerRequestLock)
+            {
+                if (IsDuplicateSetPlayerRequest(url, now))
+                {
+                    LogHelper.Log($"忽略重复播放请求 source={source} url={url}", LogType.DEBUG);
+                    return;
+                }
+
+                pendingSetPlayerUrl = url;
+                pendingSetPlayerUtc = now;
+                if (!setPlayerWorkerRunning)
+                {
+                    setPlayerWorkerRunning = true;
+                    startWorker = true;
+                }
+            }
+
+            if (startWorker)
+            {
+                _ = ProcessSetPlayerQueueAsync();
+            }
+        }
+
+        private bool IsDuplicateSetPlayerRequest(string url, DateTimeOffset now)
+        {
+            if (!string.IsNullOrEmpty(activeSetPlayerUrl) &&
+                string.Equals(activeSetPlayerUrl, url, StringComparison.OrdinalIgnoreCase) &&
+                (now - activeSetPlayerUtc) <= DuplicateSetPlayerWindow)
+            {
+                return true;
+            }
+
+            if (!string.IsNullOrEmpty(pendingSetPlayerUrl) &&
+                string.Equals(pendingSetPlayerUrl, url, StringComparison.OrdinalIgnoreCase) &&
+                (now - pendingSetPlayerUtc) <= DuplicateSetPlayerWindow)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        private async Task ProcessSetPlayerQueueAsync()
+        {
+            while (true)
+            {
+                string nextUrl;
+                lock (setPlayerRequestLock)
+                {
+                    nextUrl = pendingSetPlayerUrl;
+                    pendingSetPlayerUrl = null;
+                    if (string.IsNullOrWhiteSpace(nextUrl))
+                    {
+                        activeSetPlayerUrl = null;
+                        setPlayerWorkerRunning = false;
+                        return;
+                    }
+
+                    activeSetPlayerUrl = nextUrl;
+                    activeSetPlayerUtc = DateTimeOffset.UtcNow;
+                }
+
+                try
+                {
+                    await SetPlayer(nextUrl);
+                }
+                finally
+                {
+                    lock (setPlayerRequestLock)
+                    {
+                        if (string.Equals(activeSetPlayerUrl, nextUrl, StringComparison.OrdinalIgnoreCase))
+                        {
+                            activeSetPlayerUrl = null;
+                        }
+
+                        if (string.IsNullOrWhiteSpace(pendingSetPlayerUrl))
+                        {
+                            setPlayerWorkerRunning = false;
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
         private void CancelStreamReconnect()
         {
             var cts = streamReconnectCts;
@@ -731,7 +836,7 @@ namespace AllLive.UWP.Views
                             var url = liveRoomVM?.CurrentLine?.Url;
                             if (!string.IsNullOrEmpty(url))
                             {
-                                await SetPlayer(url);
+                                QueueSetPlayer(url, $"Reconnect/{reason}");
                             }
                         }
                         else if (level == 1)
@@ -1549,6 +1654,10 @@ namespace AllLive.UWP.Views
             {
                 return;
             }
+            if (TryFallbackBilibiliCodec("播放失败"))
+            {
+                return;
+            }
             if (TryRetryCurrentLine("播放失败"))
             {
                 return;
@@ -1585,6 +1694,34 @@ namespace AllLive.UWP.Views
             lastHuyaRefreshUtc = now;
             LogHelper.Log($"虎牙播放异常，尝试刷新播放地址。原因: {reason}", LogType.DEBUG);
             liveRoomVM.LoadPlayUrl();
+            return true;
+        }
+
+        private bool TryFallbackBilibiliCodec(string reason)
+        {
+            if (liveRoomVM == null || liveRoomVM.SiteName != "哔哩哔哩直播")
+            {
+                return false;
+            }
+
+            if (string.Equals(liveRoomVM.SelectedCodec, "AVC", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            var currentCodec = liveRoomVM.CurrentLine?.Codec;
+            if (string.IsNullOrWhiteSpace(currentCodec) || string.Equals(currentCodec, "AVC", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (liveRoomVM.AvailableCodecs?.Any(x => string.Equals(x, "AVC", StringComparison.OrdinalIgnoreCase)) != true)
+            {
+                return false;
+            }
+
+            LogHelper.Log($"哔哩哔哩直播播放异常，自动从 {currentCodec} 切换到 AVC。原因: {reason}", LogType.DEBUG);
+            liveRoomVM.SelectedCodec = "AVC";
             return true;
         }
 
@@ -1652,7 +1789,7 @@ namespace AllLive.UWP.Views
                 {
                     return;
                 }
-                _ = SetPlayer(url);
+                QueueSetPlayer(url, "RetryCurrentLine");
             });
         }
 

@@ -390,9 +390,9 @@ namespace AllLive.Core
                 queryParameters: new Dictionary<string, string>() {
                     { "room_id", roomID } ,
                     { "protocol", "0,1" },
-                    { "format", "0,2"},
+                    { "format", "0,1,2"},
                     { "codec","0"},
-                    { "platform", "web" },
+                    { "platform", "html5" },
                     { "qn",qn.ToString()}
                 }
             );

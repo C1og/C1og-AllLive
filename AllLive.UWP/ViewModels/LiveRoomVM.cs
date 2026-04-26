@@ -693,17 +693,12 @@ namespace AllLive.UWP.ViewModels
             }
 
             var ordered = new List<string>();
-            if (codecs.Any(x => string.Equals(x, "AVC", StringComparison.OrdinalIgnoreCase)))
+            foreach (var codec in GetPreferredCodecOrder())
             {
-                ordered.Add("AVC");
-            }
-            if (codecs.Any(x => string.Equals(x, "HEVC", StringComparison.OrdinalIgnoreCase)))
-            {
-                ordered.Add("HEVC");
-            }
-            if (codecs.Any(x => string.Equals(x, "AV1", StringComparison.OrdinalIgnoreCase)))
-            {
-                ordered.Add("AV1");
+                if (codecs.Any(x => string.Equals(x, codec, StringComparison.OrdinalIgnoreCase)))
+                {
+                    ordered.Add(codec);
+                }
             }
             foreach (var codec in codecs)
             {
@@ -722,22 +717,38 @@ namespace AllLive.UWP.ViewModels
 
             if (!hasSelected || string.Equals(SelectedCodec, "全部", StringComparison.OrdinalIgnoreCase))
             {
-                if (newList.Any(x => string.Equals(x, "HEVC", StringComparison.OrdinalIgnoreCase)))
-                {
-                    SelectedCodec = "HEVC";
-                    return;
-                }
-                if (newList.Any(x => string.Equals(x, "AVC", StringComparison.OrdinalIgnoreCase)))
-                {
-                    SelectedCodec = "AVC";
-                    return;
-                }
-                var fallback = newList.FirstOrDefault(x => !string.Equals(x, "全部", StringComparison.OrdinalIgnoreCase));
-                SelectedCodec = fallback ?? "全部";
+                SelectedCodec = GetDefaultCodecSelection(newList);
                 return;
             }
 
             ApplyCodecFilter();
+        }
+
+        private IEnumerable<string> GetPreferredCodecOrder()
+        {
+            if (string.Equals(Site?.Name, "哔哩哔哩直播", StringComparison.OrdinalIgnoreCase))
+            {
+                return new[] { "AVC", "HEVC", "AV1" };
+            }
+
+            return new[] { "HEVC", "AVC", "AV1" };
+        }
+
+        private string GetDefaultCodecSelection(IEnumerable<string> codecList)
+        {
+            if (codecList != null)
+            {
+                foreach (var codec in GetPreferredCodecOrder())
+                {
+                    if (codecList.Any(x => string.Equals(x, codec, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        return codec;
+                    }
+                }
+            }
+
+            var fallback = codecList?.FirstOrDefault(x => !string.Equals(x, "全部", StringComparison.OrdinalIgnoreCase));
+            return fallback ?? "全部";
         }
 
         private void ApplyCodecFilter()
