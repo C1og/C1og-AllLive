@@ -736,6 +736,7 @@ namespace AllLive.UWP.Views
             while (true)
             {
                 string nextUrl;
+                bool shouldExit = false;
                 lock (setPlayerRequestLock)
                 {
                     nextUrl = pendingSetPlayerUrl;
@@ -767,9 +768,14 @@ namespace AllLive.UWP.Views
                         if (string.IsNullOrWhiteSpace(pendingSetPlayerUrl))
                         {
                             setPlayerWorkerRunning = false;
-                            return;
+                            shouldExit = true;
                         }
                     }
+                }
+
+                if (shouldExit)
+                {
+                    return;
                 }
             }
         }
