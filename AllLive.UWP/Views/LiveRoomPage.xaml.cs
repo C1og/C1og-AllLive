@@ -78,6 +78,7 @@ namespace AllLive.UWP.Views
         private static readonly TimeSpan EarlyEndThreshold = TimeSpan.FromSeconds(8);
         private static readonly TimeSpan CurrentLineRetryDelay = TimeSpan.FromSeconds(1);
         private static readonly TimeSpan BilibiliRetryWindow = TimeSpan.FromSeconds(45);
+        private static readonly TimeSpan BilibiliCreateSourceTimeout = TimeSpan.FromSeconds(12);
         private const string BilibiliPlaybackUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0";
 
         private System.Threading.CancellationTokenSource streamReconnectCts;
@@ -1622,7 +1623,35 @@ namespace AllLive.UWP.Views
                 }
                 try
                 {
-                    interopMSS = await FFmpegMediaSource.CreateFromUriAsync(url, config);
+                    var createTimeout = GetMediaSourceCreateTimeout(url);
+                    var createStartedUtc = DateTimeOffset.UtcNow;
+                    var createTask = FFmpegMediaSource.CreateFromUriAsync(url, config).AsTask();
+                    if (createTimeout.HasValue)
+                    {
+                        var completedTask = await Task.WhenAny(createTask, Task.Delay(createTimeout.Value));
+                        if (completedTask != createTask)
+                        {
+                            _ = createTask.ContinueWith(t =>
+                            {
+                                var ignored = t.Exception;
+                            }, TaskContinuationOptions.OnlyOnFaulted);
+                            var timeoutExtra = JoinNonEmpty(
+                                lastConfigSnapshot,
+                                lastUrlAnalysis,
+                                $"播放器建源超时: {createTimeout.Value.TotalSeconds:F0}s elapsedMs={(DateTimeOffset.UtcNow - createStartedUtc).TotalMilliseconds:F0}");
+                            LogPlayError("播放器初始化超时",
+                                new TimeoutException($"FFmpegMediaSource.CreateFromUriAsync 超时 {createTimeout.Value.TotalSeconds:F0}s"),
+                                timeoutExtra);
+                            PlayError();
+                            return;
+                        }
+                    }
+
+                    interopMSS = await createTask;
+                    if (createTimeout.HasValue)
+                    {
+                        LogHelper.Log($"播放器建源完成 elapsedMs={(DateTimeOffset.UtcNow - createStartedUtc).TotalMilliseconds:F0} 线路: {liveRoomVM?.CurrentLine?.Name}", LogType.DEBUG);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -1729,6 +1758,22 @@ namespace AllLive.UWP.Views
             LogHelper.Log($"哔哩哔哩直播播放异常，自动从 {currentCodec} 切换到 AVC。原因: {reason}", LogType.DEBUG);
             liveRoomVM.SelectedCodec = "AVC";
             return true;
+        }
+
+        private TimeSpan? GetMediaSourceCreateTimeout(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                return null;
+            }
+
+            if (liveRoomVM?.SiteName == "哔哩哔哩直播" &&
+                url.IndexOf(".m3u8", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return BilibiliCreateSourceTimeout;
+            }
+
+            return null;
         }
 
         private bool TryRetryCurrentLine(string reason)
