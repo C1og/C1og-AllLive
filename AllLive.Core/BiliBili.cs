@@ -390,9 +390,11 @@ namespace AllLive.Core
                 queryParameters: new Dictionary<string, string>() {
                     { "room_id", roomID } ,
                     { "protocol", "0,1" },
-                    { "format", "0,1,2"},
+                    // Align with dart_simple_live: prefer the web playinfo shape so FLV candidates
+                    // can be returned for engines that are less tolerant of some html5 HLS streams.
+                    { "format", "0,2"},
                     { "codec","0"},
-                    { "platform", "html5" },
+                    { "platform", "web" },
                     { "qn",qn.ToString()}
                 }
             );

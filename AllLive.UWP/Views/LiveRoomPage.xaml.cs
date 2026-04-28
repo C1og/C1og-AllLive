@@ -692,7 +692,7 @@ namespace AllLive.UWP.Views
             var now = DateTimeOffset.UtcNow;
             lock (setPlayerRequestLock)
             {
-                if (IsDuplicateSetPlayerRequest(url, now))
+                if (IsDuplicateSetPlayerRequest(url, now, source))
                 {
                     LogHelper.Log($"忽略重复播放请求 source={source} url={url}", LogType.DEBUG);
                     return;
@@ -713,11 +713,18 @@ namespace AllLive.UWP.Views
             }
         }
 
-        private bool IsDuplicateSetPlayerRequest(string url, DateTimeOffset now)
+        private bool IsDuplicateSetPlayerRequest(string url, DateTimeOffset now, string source)
         {
+            var allowRetryOfActiveUrl =
+                string.Equals(source, "RetryCurrentLine", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrEmpty(activeSetPlayerUrl) &&
+                string.Equals(activeSetPlayerUrl, url, StringComparison.OrdinalIgnoreCase) &&
+                string.IsNullOrWhiteSpace(pendingSetPlayerUrl);
+
             if (!string.IsNullOrEmpty(activeSetPlayerUrl) &&
                 string.Equals(activeSetPlayerUrl, url, StringComparison.OrdinalIgnoreCase) &&
-                (now - activeSetPlayerUtc) <= DuplicateSetPlayerWindow)
+                (now - activeSetPlayerUtc) <= DuplicateSetPlayerWindow &&
+                !allowRetryOfActiveUrl)
             {
                 return true;
             }
