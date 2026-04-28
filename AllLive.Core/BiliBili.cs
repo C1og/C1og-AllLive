@@ -11,6 +11,8 @@ using WebSocketSharp;
 using System.Linq;
 using Newtonsoft.Json;
 using System.Web;
+using System.Net;
+using System.Net.Http;
 
 namespace AllLive.Core
 {
@@ -301,49 +303,54 @@ namespace AllLive.Core
         }
         public async Task<List<LivePlayQuality>> GetPlayQuality(LiveRoomDetail roomDetail)
         {
-            if (string.IsNullOrEmpty(Cookie))
+            try
             {
-                return await GetPlayQualityOld(roomDetail.RoomID);
+                var qualities = await GetPlayQualityNew(roomDetail.RoomID);
+                if (qualities != null && qualities.Count > 0)
+                {
+                    return qualities;
+                }
+                CoreDebug.Log($"[Bilibili] GetPlayQualityNew返回空列表 roomId={roomDetail?.RoomID}，回退旧接口");
             }
-            else
+            catch (Exception ex)
             {
-                return await GetPlayQualityNew(roomDetail.RoomID);
+                CoreDebug.Log($"[Bilibili] GetPlayQualityNew失败 roomId={roomDetail?.RoomID} err={ex.GetType().FullName} {ex.Message}，回退旧接口");
             }
+            return await GetPlayQualityOld(roomDetail.RoomID);
         }
         /// <summary>
-        /// 新的获取清晰度方式，需要登录
+        /// 新的获取清晰度方式，优先走 web-room playinfo
         /// </summary>
         /// <param name="roomID"></param>
         /// <returns></returns>
         private async Task<List<LivePlayQuality>> GetPlayQualityNew(string roomID)
         {
-
             List<LivePlayQuality> qualities = new List<LivePlayQuality>();
-            var result = await HttpUtil.GetString($"https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo",
-                headers: await GetRequestHeader(),
-                queryParameters: new Dictionary<string, string>() {
-                    { "room_id", roomID } ,
-                    { "protocol", "0,1" },
-                    { "format", "0,1,2"},
-                    { "codec","0,1"},
-                    { "platform", "web"}
-                }
-            );
-            var obj = JObject.Parse(result);
-            var qualitiesMap = new Dictionary<int, string>();
-            foreach (var item in obj["data"]["playurl_info"]["playurl"]["g_qn_desc"])
+            var client = await CreateBilibiliPlayInfoHttpClientAsync();
+            using (client)
             {
-                qualitiesMap[item["qn"].ToObject<int>()] =
-                    item["desc"].ToString();
-            }
-            foreach (var item in obj["data"]["playurl_info"]["playurl"]["stream"][0]["format"][0]["codec"][0]["accept_qn"])
-            {
-                var qualityItem = new LivePlayQuality()
+                var obj = await RequestBilibiliPlayInfoAsync(client, roomID, null);
+                var playurl = obj?["data"]?["playurl_info"]?["playurl"];
+                if (playurl == null)
                 {
-                    Quality = qualitiesMap[item.ToObject<int>()] ?? "未知清晰度",
-                    Data = item,
-                };
-                qualities.Add(qualityItem);
+                    throw new Exception("playurl_info.playurl为空");
+                }
+                var qualitiesMap = new Dictionary<int, string>();
+                foreach (var item in playurl["g_qn_desc"] ?? new JArray())
+                {
+                    qualitiesMap[item["qn"].ToObject<int>()] = item["desc"]?.ToString() ?? "未知清晰度";
+                }
+                foreach (var item in playurl["stream"]?[0]?["format"]?[0]?["codec"]?[0]?["accept_qn"] ?? new JArray())
+                {
+                    var qnValue = item.ToObject<int>();
+                    var qualityText = qualitiesMap.ContainsKey(qnValue) ? qualitiesMap[qnValue] : "未知清晰度";
+                    var qualityItem = new LivePlayQuality()
+                    {
+                        Quality = qualityText,
+                        Data = item,
+                    };
+                    qualities.Add(qualityItem);
+                }
             }
             return qualities;
         }
@@ -372,57 +379,86 @@ namespace AllLive.Core
 
         public async Task<List<string>> GetPlayUrls(LiveRoomDetail roomDetail, LivePlayQuality qn)
         {
-            if (string.IsNullOrEmpty(Cookie))
+            try
             {
-                return await GetPlayUrlsOld(roomDetail.RoomID, qn.Data);
+                var urls = await GetPlayUrlsNew(roomDetail.RoomID, qn.Data);
+                if (urls != null && urls.Count > 0)
+                {
+                    return urls;
+                }
+                CoreDebug.Log($"[Bilibili] GetPlayUrlsNew返回空列表 roomId={roomDetail?.RoomID} qn={qn?.Data}，回退旧接口");
             }
-            else
+            catch (Exception ex)
             {
-                return await GetPlayUrlsNew(roomDetail.RoomID, qn.Data);
+                CoreDebug.Log($"[Bilibili] GetPlayUrlsNew失败 roomId={roomDetail?.RoomID} qn={qn?.Data} err={ex.GetType().FullName} {ex.Message}，回退旧接口");
             }
+            return await GetPlayUrlsOld(roomDetail.RoomID, qn.Data);
         }
         private async Task<List<string>> GetPlayUrlsNew(string roomID, object qn)
         {
-            List<string> urls = new List<string>();
-            List<LivePlayQuality> qualities = new List<LivePlayQuality>();
-            var result = await HttpUtil.GetString($"https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo",
-                headers: await GetRequestHeader(),
-                queryParameters: new Dictionary<string, string>() {
-                    { "room_id", roomID } ,
-                    { "protocol", "0,1" },
-                    // Align with dart_simple_live: prefer the web playinfo shape so FLV candidates
-                    // can be returned for engines that are less tolerant of some html5 HLS streams.
-                    { "format", "0,2"},
-                    { "codec","0"},
-                    { "platform", "web" },
-                    { "qn",qn.ToString()}
-                }
-            );
-            var obj = JObject.Parse(result);
-            var streamList = obj["data"]["playurl_info"]["playurl"]["stream"];
-            foreach (var streamItem in streamList)
+            const int maxPlayInfoAttempt = 4;
+            var qnValue = TryConvertToInt(qn);
+            var flvUrls = new List<string>();
+            var preferredHlsUrls = new List<string>();
+            var otherHlsUrls = new List<string>();
+            Exception lastException = null;
+            var client = await CreateBilibiliPlayInfoHttpClientAsync();
+            using (client)
             {
-                var formatList = streamItem["format"];
-                foreach (var formatItem in formatList)
+                for (int attempt = 1; attempt <= maxPlayInfoAttempt; attempt++)
                 {
-                    var codecList = formatItem["codec"];
-                    foreach (var codecItem in codecList)
+                    try
                     {
-                        var urlList = codecItem["url_info"];
-                        var baseUrl = codecItem["base_url"].ToString();
-                        foreach (var urlItem in urlList)
+                        var obj = await RequestBilibiliPlayInfoAsync(client, roomID, qnValue);
+                        var playurl = obj?["data"]?["playurl_info"]?["playurl"];
+                        var candidates = ParseBilibiliPlayUrlCandidates(playurl);
+                        var flvAttempt = OrderBilibiliPlayUrls(candidates.Where(x => x.IsFlv).Select(x => x.Url).ToList());
+                        var preferredHlsAttempt = OrderBilibiliPlayUrls(candidates.Where(x => x.IsHls && IsPreferredBilibiliHlsHost(x.Url)).Select(x => x.Url).ToList());
+                        var otherHlsAttempt = OrderBilibiliPlayUrls(candidates.Where(x => x.IsHls && !IsPreferredBilibiliHlsHost(x.Url)).Select(x => x.Url).ToList());
+
+                        AppendUniqueUrls(flvUrls, flvAttempt);
+                        AppendUniqueUrls(preferredHlsUrls, preferredHlsAttempt);
+                        AppendUniqueUrls(otherHlsUrls, otherHlsAttempt);
+
+                        CoreDebug.Log($"[Bilibili] FLV-first attempt={attempt} roomId={roomID} qn={qnValue?.ToString() ?? "null"} flv={flvAttempt.Count} preferredHls={preferredHlsAttempt.Count} otherHls={otherHlsAttempt.Count}");
+
+                        if (flvAttempt.Count > 0)
                         {
-                            urls.Add(
-                              $"{urlItem["host"].ToString()}{baseUrl.ToString()}{urlItem["extra"].ToString()}"
-                            );
+                            break;
                         }
                     }
+                    catch (Exception ex)
+                    {
+                        lastException = ex;
+                        CoreDebug.Log($"[Bilibili] PlayInfo attempt failed roomId={roomID} qn={qnValue?.ToString() ?? "null"} attempt={attempt}/{maxPlayInfoAttempt} err={ex.GetType().FullName} {ex.Message}");
+                    }
+                }
+
+                if (flvUrls.Count == 0 && preferredHlsUrls.Count == 0 && otherHlsUrls.Count == 0 && lastException != null)
+                {
+                    throw lastException;
+                }
+
+                if (flvUrls.Count == 0)
+                {
+                    var verifiedPreferred = await VerifyBilibiliHlsCandidatesAsync(client, roomID, preferredHlsUrls);
+                    var verifiedOther = await VerifyBilibiliHlsCandidatesAsync(client, roomID, otherHlsUrls);
+                    var hlsFallbackUrls = new List<string>();
+                    AppendUniqueUrls(hlsFallbackUrls, verifiedPreferred);
+                    AppendUniqueUrls(hlsFallbackUrls, verifiedOther);
+                    AppendUniqueUrls(hlsFallbackUrls, preferredHlsUrls);
+                    AppendUniqueUrls(hlsFallbackUrls, otherHlsUrls);
+                    CoreDebug.Log($"[Bilibili] FLV缺失，使用HLS回退 roomId={roomID} qn={qnValue?.ToString() ?? "null"} verifiedPreferred={verifiedPreferred.Count} verifiedOther={verifiedOther.Count} total={hlsFallbackUrls.Count}");
+                    return hlsFallbackUrls;
                 }
             }
 
-            urls = OrderBilibiliPlayUrls(urls);
-
-            return urls;
+            var orderedUrls = new List<string>();
+            AppendUniqueUrls(orderedUrls, flvUrls);
+            AppendUniqueUrls(orderedUrls, preferredHlsUrls);
+            AppendUniqueUrls(orderedUrls, otherHlsUrls);
+            CoreDebug.Log($"[Bilibili] FLV-first命中 roomId={roomID} qn={qnValue?.ToString() ?? "null"} flv={flvUrls.Count} hls={preferredHlsUrls.Count + otherHlsUrls.Count} total={orderedUrls.Count}");
+            return orderedUrls;
         }
         /// <summary>
         /// 旧的获取播放地址方式，部分直播看不了
@@ -440,6 +476,212 @@ namespace AllLive.Core
                 urls.Add(item["url"].ToString());
             }
             return OrderBilibiliPlayUrls(urls);
+        }
+
+        private sealed class BilibiliPlayUrlCandidate
+        {
+            public string Url { get; set; }
+            public bool IsFlv { get; set; }
+            public bool IsHls { get; set; }
+        }
+
+        private async Task<HttpClient> CreateBilibiliPlayInfoHttpClientAsync()
+        {
+            var headers = await GetRequestHeader();
+            var handler = new HttpClientHandler()
+            {
+                AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
+                UseProxy = false,
+            };
+            var client = new HttpClient(handler);
+            client.Timeout = TimeSpan.FromSeconds(10);
+            foreach (var item in headers)
+            {
+                client.DefaultRequestHeaders.TryAddWithoutValidation(item.Key, item.Value);
+            }
+            client.DefaultRequestHeaders.TryAddWithoutValidation("Origin", "https://live.bilibili.com");
+            return client;
+        }
+
+        private async Task<JObject> RequestBilibiliPlayInfoAsync(HttpClient client, string roomID, int? qn)
+        {
+            var queryParameters = new Dictionary<string, string>()
+            {
+                { "room_id", roomID },
+                { "protocol", "0,1" },
+                { "format", "0,1,2" },
+                { "codec", "0" },
+                { "platform", "html5" },
+                { "dolby", "5" },
+            };
+            if (qn.HasValue)
+            {
+                queryParameters["qn"] = qn.Value.ToString();
+            }
+            var query = string.Join("&", queryParameters.Select(x => $"{x.Key}={Uri.EscapeDataString(x.Value ?? string.Empty)}"));
+            var requestUrl = $"https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo?{query}";
+            var response = await client.GetAsync(requestUrl);
+            response.EnsureSuccessStatusCode();
+            var result = await response.Content.ReadAsStringAsync();
+            var obj = JObject.Parse(result);
+            if (obj["code"]?.ToObject<int>() != 0)
+            {
+                throw new Exception($"getRoomPlayInfo返回异常 code={obj["code"]} message={obj["message"] ?? obj["msg"]}");
+            }
+            return obj;
+        }
+
+        private static List<BilibiliPlayUrlCandidate> ParseBilibiliPlayUrlCandidates(JToken playurl)
+        {
+            var result = new List<BilibiliPlayUrlCandidate>();
+            var dedupe = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var streamList = playurl?["stream"] as JArray;
+            if (streamList == null)
+            {
+                return result;
+            }
+
+            foreach (var streamItem in streamList)
+            {
+                var protocolName = streamItem["protocol_name"]?.ToString() ?? string.Empty;
+                var formatList = streamItem["format"] as JArray;
+                if (formatList == null)
+                {
+                    continue;
+                }
+
+                foreach (var formatItem in formatList)
+                {
+                    var formatName = formatItem["format_name"]?.ToString() ?? string.Empty;
+                    var codecList = formatItem["codec"] as JArray;
+                    if (codecList == null)
+                    {
+                        continue;
+                    }
+
+                    foreach (var codecItem in codecList)
+                    {
+                        var baseUrl = codecItem["base_url"]?.ToString() ?? string.Empty;
+                        if (string.IsNullOrWhiteSpace(baseUrl))
+                        {
+                            continue;
+                        }
+
+                        var urlList = codecItem["url_info"] as JArray;
+                        if (urlList == null)
+                        {
+                            continue;
+                        }
+
+                        foreach (var urlItem in urlList)
+                        {
+                            var host = urlItem["host"]?.ToString() ?? string.Empty;
+                            var extra = urlItem["extra"]?.ToString() ?? string.Empty;
+                            var url = $"{host}{baseUrl}{extra}";
+                            if (string.IsNullOrWhiteSpace(url) || !dedupe.Add(url))
+                            {
+                                continue;
+                            }
+
+                            var lowerProtocol = protocolName.ToLowerInvariant();
+                            var lowerFormat = formatName.ToLowerInvariant();
+                            var isFlv = lowerFormat == "flv" || url.IndexOf(".flv", StringComparison.OrdinalIgnoreCase) >= 0;
+                            var isHls = lowerProtocol.Contains("hls")
+                                || lowerFormat == "ts"
+                                || lowerFormat == "fmp4"
+                                || lowerFormat == "mp4"
+                                || lowerFormat == "m4s"
+                                || lowerFormat == "m3u8"
+                                || url.IndexOf(".m3u8", StringComparison.OrdinalIgnoreCase) >= 0;
+
+                            result.Add(new BilibiliPlayUrlCandidate()
+                            {
+                                Url = url,
+                                IsFlv = isFlv,
+                                IsHls = isHls,
+                            });
+                        }
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        private async Task<List<string>> VerifyBilibiliHlsCandidatesAsync(HttpClient client, string roomID, IEnumerable<string> urls)
+        {
+            var verified = new List<string>();
+            foreach (var url in urls.Where(x => !string.IsNullOrWhiteSpace(x)).Take(4))
+            {
+                try
+                {
+                    using (var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead))
+                    {
+                        if (response.IsSuccessStatusCode)
+                        {
+                            verified.Add(url);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    CoreDebug.Log($"[Bilibili] HLS探测失败 roomId={roomID} url={url} err={ex.GetType().FullName} {ex.Message}");
+                }
+            }
+            return verified;
+        }
+
+        private static void AppendUniqueUrls(List<string> target, IEnumerable<string> urls)
+        {
+            if (target == null || urls == null)
+            {
+                return;
+            }
+
+            var seen = new HashSet<string>(target, StringComparer.OrdinalIgnoreCase);
+            foreach (var url in urls)
+            {
+                if (string.IsNullOrWhiteSpace(url) || !seen.Add(url))
+                {
+                    continue;
+                }
+                target.Add(url);
+            }
+        }
+
+        private static bool IsPreferredBilibiliHlsHost(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                return false;
+            }
+
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            {
+                return url.IndexOf("d1--cn", StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+
+            return uri.Host.IndexOf("d1--cn", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static int? TryConvertToInt(object value)
+        {
+            if (value == null)
+            {
+                return null;
+            }
+
+            if (value is int intValue)
+            {
+                return intValue;
+            }
+
+            if (int.TryParse(value.ToString(), out var parsed))
+            {
+                return parsed;
+            }
+
+            return null;
         }
 
         private static List<string> OrderBilibiliPlayUrls(List<string> urls)
