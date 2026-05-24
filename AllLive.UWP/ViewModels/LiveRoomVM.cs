@@ -424,6 +424,7 @@ namespace AllLive.UWP.ViewModels
                         UserName = "系统",
                         Message = "弹幕启动失败，已继续加载播放"
                     });
+                    StartDanmakuReconnect(useInitialFailureMessage: true);
                 }
                 if (detail.Status)
                 {
@@ -919,15 +920,25 @@ namespace AllLive.UWP.ViewModels
                 return;
             }
 
+            StartDanmakuReconnect(useInitialFailureMessage: false);
+        }
+
+        private void StartDanmakuReconnect(bool useInitialFailureMessage)
+        {
+            if (!isActive)
+            {
+                return;
+            }
+
             if (System.Threading.Interlocked.CompareExchange(ref reconnectInProgress, 1, 0) != 0)
             {
                 return;
             }
 
-            _ = ReconnectDanmakuAsync();
+            _ = ReconnectDanmakuAsync(useInitialFailureMessage);
         }
 
-        private async Task ReconnectDanmakuAsync()
+        private async Task ReconnectDanmakuAsync(bool useInitialFailureMessage)
         {
             CancelDanmakuReconnect();
             var cts = new System.Threading.CancellationTokenSource();
@@ -955,8 +966,11 @@ namespace AllLive.UWP.ViewModels
 
                     var delay = DanmakuReconnectDelays[Math.Min(danmakuReconnectAttempt, DanmakuReconnectDelays.Length - 1)];
                     danmakuReconnectAttempt++;
+                    var reconnectMessage = useInitialFailureMessage
+                        ? $"弹幕启动失败，{delay.TotalSeconds:F0}s 后重试连接 ({danmakuReconnectAttempt}/{MaxDanmakuReconnectAttempts})"
+                        : $"弹幕连接异常，{delay.TotalSeconds:F0}s 后重连 ({danmakuReconnectAttempt}/{MaxDanmakuReconnectAttempts})";
                     RaiseReconnectStatus("弹幕", true, danmakuReconnectAttempt, MaxDanmakuReconnectAttempts,
-                        $"弹幕连接异常，{delay.TotalSeconds:F0}s 后重连 ({danmakuReconnectAttempt}/{MaxDanmakuReconnectAttempts})");
+                        reconnectMessage);
                     try
                     {
                         await Task.Delay(delay, token);
