@@ -577,7 +577,7 @@ namespace AllLive.UWP.ViewModels
                     {
                         Name = $"线路{i + 1}",
                         Url = data[i],
-                        Codec = DetectCodecLabel(data[i])
+                        Codec = DetectCodecLabel(data[i], Site?.Name)
                     });
                 }
 
@@ -791,7 +791,7 @@ namespace AllLive.UWP.ViewModels
             }
         }
 
-        private static string DetectCodecLabel(string url)
+        private static string DetectCodecLabel(string url, string siteName)
         {
             if (string.IsNullOrWhiteSpace(url))
             {
@@ -835,6 +835,11 @@ namespace AllLive.UWP.ViewModels
             }
 
             if (url.IndexOf(".flv", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return "AVC";
+            }
+            if (string.Equals(siteName, "抖音直播", StringComparison.OrdinalIgnoreCase)
+                && url.IndexOf(".m3u8", StringComparison.OrdinalIgnoreCase) >= 0)
             {
                 return "AVC";
             }
