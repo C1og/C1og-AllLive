@@ -101,6 +101,12 @@ namespace AllLive.UWP.Views
             syncVM.DisconnectSignalR();
         }
 
+        protected override void OnNavigatedFrom(NavigationEventArgs e)
+        {
+            syncVM.DisconnectSignalR();
+            base.OnNavigatedFrom(e);
+        }
+
         private void btnSendFollow_Click(object sender, RoutedEventArgs e)
         {
             syncVM.SendFollow();

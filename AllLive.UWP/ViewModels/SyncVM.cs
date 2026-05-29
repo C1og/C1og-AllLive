@@ -64,6 +64,8 @@ namespace AllLive.UWP.ViewModels
         }
 
         HubConnection connection;
+        private Func<Exception, Task> connectionClosedHandler;
+        private bool isDisconnecting;
         public async void ConnectSignalR(string roomId)
         {
             try
@@ -74,16 +76,21 @@ namespace AllLive.UWP.ViewModels
                     return;
                 }
                 SignalRConnecting = true;
+                await DisconnectSignalRAsync(false);
                 connection = new HubConnectionBuilder()
                    .WithUrl(URL)
                    .Build();
-                connection.Closed += async (error) =>
+                connectionClosedHandler = async (error) =>
                 {
-                    RoomConnected = false;
-                    Utils.ShowMessageToast("连接已断开");
-                    LogHelper.Log("连接已断开", LogType.ERROR, error);
+                    if (!isDisconnecting)
+                    {
+                        RoomConnected = false;
+                        Utils.ShowMessageToast("连接已断开");
+                        LogHelper.Log("连接已断开", LogType.ERROR, error);
+                    }
                     await Task.CompletedTask;
                 };
+                connection.Closed += connectionClosedHandler;
                 await connection.StartAsync();
                 ListenSignalR();
                 if (roomId == null || roomId == "")
@@ -101,6 +108,7 @@ namespace AllLive.UWP.ViewModels
             {
                 LogHelper.Log("连接失败", LogType.ERROR, ex);
                 Utils.ShowMessageToast($"连接失败：{ex.Message}");
+                await DisconnectSignalRAsync();
             }
             finally
             {
@@ -110,36 +118,66 @@ namespace AllLive.UWP.ViewModels
 
         public void ListenSignalR()
         {
-            connection.On<bool, string>("onFavoriteReceived", (overlay, content) =>
+            var activeConnection = connection;
+            if (activeConnection == null)
             {
+                return;
+            }
+
+            activeConnection.On<bool, string>("onFavoriteReceived", (overlay, content) =>
+            {
+                if (!IsCurrentConnection(activeConnection))
+                {
+                    return;
+                }
                 ReceiveFavorite(overlay, content);
             });
-            connection.On<bool, string>("onHistoryReceived", (overlay, content) =>
+            activeConnection.On<bool, string>("onHistoryReceived", (overlay, content) =>
             {
+                if (!IsCurrentConnection(activeConnection))
+                {
+                    return;
+                }
                 ReceiveHistory(overlay, content);
             });
-            connection.On<bool, string>("onShieldWordReceived", (overlay, content) =>
+            activeConnection.On<bool, string>("onShieldWordReceived", (overlay, content) =>
             {
+                if (!IsCurrentConnection(activeConnection))
+                {
+                    return;
+                }
                 ReceiveShieldWord(overlay, content);
             });
-            connection.On<bool, string>("onBiliAccountReceived", (overlay, content) =>
+            activeConnection.On<bool, string>("onBiliAccountReceived", (overlay, content) =>
             {
+                if (!IsCurrentConnection(activeConnection))
+                {
+                    return;
+                }
                 ReceiveBiliBili(overlay, content);
             });
-            connection.On<string>("onRoomDestroyed", (roomName) =>
+            activeConnection.On<string>("onRoomDestroyed", (roomName) =>
             {
+                if (!IsCurrentConnection(activeConnection))
+                {
+                    return;
+                }
                 ShowMessage("房间已销毁");
                 DisconnectSignalR();
             });
 
-            connection.On<List<RoomUser>>("onUserUpdated", (user) =>
+            activeConnection.On<List<RoomUser>>("onUserUpdated", (user) =>
             {
                 _ = Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
                 {
+                    if (!IsCurrentConnection(activeConnection))
+                    {
+                        return;
+                    }
                     RoomUsers.Clear();
                     foreach (var u in user)
                     {
-                        if (u.ConnectionId == connection.ConnectionId)
+                        if (u.ConnectionId == activeConnection.ConnectionId)
                         {
                             u.IsCurrentUser = true;
                         }
@@ -242,7 +280,43 @@ namespace AllLive.UWP.ViewModels
 
         public void DisconnectSignalR()
         {
-            connection?.DisposeAsync();
+            _ = DisconnectSignalRAsync();
+        }
+
+        private async Task DisconnectSignalRAsync(bool resetState = true)
+        {
+            StopTimer();
+            var oldConnection = connection;
+            var oldConnectionClosedHandler = connectionClosedHandler;
+            connection = null;
+            connectionClosedHandler = null;
+
+            if (oldConnection != null)
+            {
+                try
+                {
+                    isDisconnecting = true;
+                    if (oldConnectionClosedHandler != null)
+                    {
+                        oldConnection.Closed -= oldConnectionClosedHandler;
+                    }
+                    await oldConnection.DisposeAsync();
+                }
+                catch (Exception ex)
+                {
+                    LogHelper.Log("断开同步连接失败", LogType.ERROR, ex);
+                }
+                finally
+                {
+                    isDisconnecting = false;
+                }
+            }
+
+            if (!resetState)
+            {
+                return;
+            }
+
             _ = Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
             {
                 SignalRConnecting = false;
@@ -254,15 +328,15 @@ namespace AllLive.UWP.ViewModels
 
         public async Task CreateRoom()
         {
-            if (connection.State != HubConnectionState.Connected)
+            var activeConnection = GetConnectedConnectionOrNotify();
+            if (activeConnection == null)
             {
-                Utils.ShowMessageToast("连接已断开");
                 return;
             }
             string app = "聚合直播";
             string platform = Utils.IsXbox ? "xbox" : "windows";
             string version = $"{SystemInformation.Instance.ApplicationVersion.Major}.{SystemInformation.Instance.ApplicationVersion.Minor}.{SystemInformation.Instance.ApplicationVersion.Build}"; ;
-            var resp = await connection?.InvokeAsync<Resp<string>>("CreateRoom", app, platform, version);
+            var resp = await activeConnection.InvokeAsync<Resp<string>>("CreateRoom", app, platform, version);
             if (resp.IsSuccess)
             {
                 RoomConnected = true;
@@ -279,35 +353,48 @@ namespace AllLive.UWP.ViewModels
 
         private void StartTimer()
         {
-            timer?.Stop();
+            StopTimer();
             Countdown = 600;
             timer = new Timer(1000);
-            timer.Elapsed += (s, e) =>
-            {
-                _ = Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
-                {
-                    Countdown--;
-                });
-                if (Countdown <= 1)
-                {
-                    DisconnectSignalR();
-                    timer.Stop();
-                }
-            };
+            timer.Elapsed += Timer_Elapsed;
             timer.Start();
+        }
+
+        private void Timer_Elapsed(object sender, ElapsedEventArgs e)
+        {
+            _ = Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
+            {
+                Countdown--;
+            });
+            if (Countdown <= 1)
+            {
+                DisconnectSignalR();
+            }
+        }
+
+        private void StopTimer()
+        {
+            if (timer == null)
+            {
+                return;
+            }
+            timer.Stop();
+            timer.Elapsed -= Timer_Elapsed;
+            timer.Dispose();
+            timer = null;
         }
 
         public async Task JoinRoom(string roomId)
         {
-            if (connection.State != HubConnectionState.Connected)
+            var activeConnection = GetConnectedConnectionOrNotify();
+            if (activeConnection == null)
             {
-                Utils.ShowMessageToast("连接已断开");
                 return;
             }
             string app = "聚合直播";
             string platform = Utils.IsXbox ? "xbox" : "windows";
             string version = $"{SystemInformation.Instance.ApplicationVersion.Major}.{SystemInformation.Instance.ApplicationVersion.Minor}.{SystemInformation.Instance.ApplicationVersion.Build}"; ;
-            var resp = await connection?.InvokeAsync<Resp<int>>("JoinRoom", roomId.ToUpper(), app, platform, version);
+            var resp = await activeConnection.InvokeAsync<Resp<int>>("JoinRoom", roomId.ToUpper(), app, platform, version);
             if (resp.IsSuccess)
             {
                 RoomConnected = true;
@@ -323,6 +410,11 @@ namespace AllLive.UWP.ViewModels
 
         public async void SendFollow()
         {
+            var activeConnection = GetConnectedConnectionOrNotify();
+            if (activeConnection == null)
+            {
+                return;
+            }
             if (RoomUsers.Count <= 1)
             {
                 ShowMessage("无设备连接");
@@ -368,7 +460,7 @@ namespace AllLive.UWP.ViewModels
                 });
             }
             var json = Newtonsoft.Json.JsonConvert.SerializeObject(items);
-            var resp = await connection?.InvokeAsync<Resp<int>>("SendFavorite", RoomID, overlay, json);
+            var resp = await activeConnection.InvokeAsync<Resp<int>>("SendFavorite", RoomID, overlay, json);
             if (resp.IsSuccess)
             {
                 ShowMessage("发送成功");
@@ -381,6 +473,11 @@ namespace AllLive.UWP.ViewModels
 
         public async void SendHistory()
         {
+            var activeConnection = GetConnectedConnectionOrNotify();
+            if (activeConnection == null)
+            {
+                return;
+            }
             if (RoomUsers.Count <= 1)
             {
                 ShowMessage("无设备连接");
@@ -425,7 +522,7 @@ namespace AllLive.UWP.ViewModels
                 });
             }
             var json = Newtonsoft.Json.JsonConvert.SerializeObject(items);
-            var resp = await connection?.InvokeAsync<Resp<int>>("SendHistory", RoomID, overlay, json);
+            var resp = await activeConnection.InvokeAsync<Resp<int>>("SendHistory", RoomID, overlay, json);
             if (resp.IsSuccess)
             {
                 ShowMessage("发送成功");
@@ -438,6 +535,11 @@ namespace AllLive.UWP.ViewModels
 
         public async void SendShieldWord()
         {
+            var activeConnection = GetConnectedConnectionOrNotify();
+            if (activeConnection == null)
+            {
+                return;
+            }
             if (RoomUsers.Count <= 1)
             {
                 ShowMessage("无设备连接");
@@ -452,7 +554,7 @@ namespace AllLive.UWP.ViewModels
                 return;
             }
             var json = Newtonsoft.Json.JsonConvert.SerializeObject(currentWords);
-            var resp = await connection?.InvokeAsync<Resp<int>>("SendShieldWord", RoomID, overlay, json);
+            var resp = await activeConnection.InvokeAsync<Resp<int>>("SendShieldWord", RoomID, overlay, json);
             if (resp.IsSuccess)
             {
                 ShowMessage("发送成功");
@@ -465,21 +567,26 @@ namespace AllLive.UWP.ViewModels
 
         public async void SendBiliBili()
         {
+            var activeConnection = GetConnectedConnectionOrNotify();
+            if (activeConnection == null)
+            {
+                return;
+            }
             if (RoomUsers.Count <= 1)
             {
                 ShowMessage("无设备连接");
                 return;
             }
 
-           
+
             var cookie = SettingHelper.GetValue<string>(SettingHelper.BILI_COOKIE, "");
             if (cookie == "")
             {
                 ShowMessage("未登录哔哩哔哩账号");
                 return;
             }
-         
-            var resp = await connection?.InvokeAsync<Resp<int>>("SendBiliAccount", RoomID, true, JsonConvert.SerializeObject(new { 
+
+            var resp = await activeConnection.InvokeAsync<Resp<int>>("SendBiliAccount", RoomID, true, JsonConvert.SerializeObject(new {
                 cookie= cookie
             }));
             if (resp.IsSuccess)
@@ -499,6 +606,22 @@ namespace AllLive.UWP.ViewModels
             dialog.Commands.Add(new UICommand("否", null, false));
             var result = await dialog.ShowAsync();
             return (bool)result.Id;
+        }
+
+        private HubConnection GetConnectedConnectionOrNotify()
+        {
+            var activeConnection = connection;
+            if (activeConnection == null || activeConnection.State != HubConnectionState.Connected)
+            {
+                ShowMessage("连接已断开");
+                return null;
+            }
+            return activeConnection;
+        }
+
+        private bool IsCurrentConnection(HubConnection activeConnection)
+        {
+            return activeConnection != null && ReferenceEquals(connection, activeConnection);
         }
 
 

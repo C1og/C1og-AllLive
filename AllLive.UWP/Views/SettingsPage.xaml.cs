@@ -36,6 +36,7 @@ namespace AllLive.UWP.Views
     {
         readonly SettingVM settingVM;
         private bool _isUpdatingDouyinCookie;
+        private bool isBiliAccountChangedSubscribed;
         public SettingsPage()
         {
             settingVM = new SettingVM();
@@ -49,9 +50,42 @@ namespace AllLive.UWP.Views
                 SettingsXboxMode.Visibility = Visibility.Visible;
                 SettingsNewWindow.Visibility = Visibility.Collapsed;
             }
-            BiliAccount.Instance.OnAccountChanged += BiliAccount_OnAccountChanged; 
+            SubscribeBiliAccountChanged();
             LoadUI();
 
+        }
+
+        protected override void OnNavigatedTo(NavigationEventArgs e)
+        {
+            base.OnNavigatedTo(e);
+            SubscribeBiliAccountChanged();
+            UpdateBiliAccountUi();
+        }
+
+        protected override void OnNavigatedFrom(NavigationEventArgs e)
+        {
+            UnsubscribeBiliAccountChanged();
+            base.OnNavigatedFrom(e);
+        }
+
+        private void SubscribeBiliAccountChanged()
+        {
+            if (isBiliAccountChangedSubscribed)
+            {
+                return;
+            }
+            BiliAccount.Instance.OnAccountChanged += BiliAccount_OnAccountChanged;
+            isBiliAccountChangedSubscribed = true;
+        }
+
+        private void UnsubscribeBiliAccountChanged()
+        {
+            if (!isBiliAccountChangedSubscribed)
+            {
+                return;
+            }
+            BiliAccount.Instance.OnAccountChanged -= BiliAccount_OnAccountChanged;
+            isBiliAccountChangedSubscribed = false;
         }
 
         private void BiliAccount_OnAccountChanged(object sender, EventArgs e)
