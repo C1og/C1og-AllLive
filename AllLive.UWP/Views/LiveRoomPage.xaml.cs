@@ -88,6 +88,9 @@ namespace AllLive.UWP.Views
         private bool isNetworkDown;
         private DispatcherTimer bufferingTimer;
         private readonly object setPlayerRequestLock = new object();
+        private bool isPageClosing;
+        private bool liveRoomCleaned;
+        private bool mediaPlayerEventsDetached;
         private bool setPlayerWorkerRunning;
         private string activeSetPlayerUrl;
         private DateTimeOffset activeSetPlayerUtc;
@@ -169,7 +172,7 @@ namespace AllLive.UWP.Views
 
         private void LiveRoomPage_Consolidated(ApplicationView sender, ApplicationViewConsolidatedEventArgs args)
         {
-            StopPlay();
+            CleanupLiveRoomPage();
             // 关闭窗口
             CoreWindow.GetForCurrentThread().Close();
         }
@@ -1563,6 +1566,10 @@ namespace AllLive.UWP.Views
         {
             try
             {
+                if (isPageClosing)
+                {
+                    return;
+                }
                 PlayerLoading.Visibility = Visibility.Visible;
                 PlayerLoadText.Text = "加载中";
                 if (mediaPlayer != null)
@@ -1623,6 +1630,10 @@ namespace AllLive.UWP.Views
                 lastUrlAnalysis = BuildUrlAnalysis(url);
                 lastProbeSnapshot = null;
                 await EnsureDiagnosticsSnapshotAsync();
+                if (isPageClosing)
+                {
+                    return;
+                }
                 var attemptLog = JoinNonEmpty("播放尝试", BuildPlaybackContext(), lastConfigSnapshot, lastUrlAnalysis);
                 if (!string.IsNullOrEmpty(attemptLog))
                 {
@@ -1636,12 +1647,14 @@ namespace AllLive.UWP.Views
                     if (createTimeout.HasValue)
                     {
                         var completedTask = await Task.WhenAny(createTask, Task.Delay(createTimeout.Value));
+                        if (isPageClosing)
+                        {
+                            _ = DisposeLateMediaSourceAsync(createTask);
+                            return;
+                        }
                         if (completedTask != createTask)
                         {
-                            _ = createTask.ContinueWith(t =>
-                            {
-                                var ignored = t.Exception;
-                            }, TaskContinuationOptions.OnlyOnFaulted);
+                            _ = DisposeLateMediaSourceAsync(createTask);
                             var timeoutExtra = JoinNonEmpty(
                                 lastConfigSnapshot,
                                 lastUrlAnalysis,
@@ -1654,7 +1667,13 @@ namespace AllLive.UWP.Views
                         }
                     }
 
-                    interopMSS = await createTask;
+                    var mediaSource = await createTask;
+                    if (isPageClosing)
+                    {
+                        try { mediaSource?.Dispose(); } catch { }
+                        return;
+                    }
+                    interopMSS = mediaSource;
                     if (createTimeout.HasValue)
                     {
                         LogHelper.Log($"播放器建源完成 elapsedMs={(DateTimeOffset.UtcNow - createStartedUtc).TotalMilliseconds:F0} 线路: {liveRoomVM?.CurrentLine?.Name}", LogType.DEBUG);
@@ -1684,6 +1703,18 @@ namespace AllLive.UWP.Views
                 Utils.ShowMessageToast("播放失败" + ex.Message);
             }
 
+        }
+
+        private async Task DisposeLateMediaSourceAsync(Task<FFmpegMediaSource> createTask)
+        {
+            try
+            {
+                var mediaSource = await createTask;
+                mediaSource?.Dispose();
+            }
+            catch
+            {
+            }
         }
 
         private async void PlayError()
@@ -1855,6 +1886,11 @@ namespace AllLive.UWP.Views
         {
             ResetStreamReconnectState();
             StopBufferingTimer();
+            lock (setPlayerRequestLock)
+            {
+                pendingSetPlayerUrl = null;
+                activeSetPlayerUrl = null;
+            }
             if (mediaPlayer != null)
             {
                 mediaPlayer.Pause();
@@ -1917,6 +1953,44 @@ namespace AllLive.UWP.Views
             }
 
         }
+
+        private void CleanupLiveRoomPage()
+        {
+            if (liveRoomCleaned)
+            {
+                return;
+            }
+            liveRoomCleaned = true;
+            isPageClosing = true;
+
+            liveRoomVM.ChangedPlayUrl -= LiveRoomVM_ChangedPlayUrl;
+            liveRoomVM.AddDanmaku -= LiveRoomVM_AddDanmaku;
+            liveRoomVM.ReconnectStatusChanged -= LiveRoomVM_ReconnectStatusChanged;
+            NetworkInformation.NetworkStatusChanged -= NetworkInformation_NetworkStatusChanged;
+            Window.Current.CoreWindow.KeyDown -= CoreWindow_KeyDown;
+            ApplicationView.GetForCurrentView().Consolidated -= LiveRoomPage_Consolidated;
+
+            StopPlay();
+            DetachMediaPlayerEvents();
+            try { player.SetMediaPlayer(null); } catch { }
+            try { mediaPlayer?.Dispose(); } catch { }
+        }
+
+        private void DetachMediaPlayerEvents()
+        {
+            if (mediaPlayerEventsDetached || mediaPlayer == null)
+            {
+                return;
+            }
+            mediaPlayerEventsDetached = true;
+            mediaPlayer.PlaybackSession.PlaybackStateChanged -= PlaybackSession_PlaybackStateChanged;
+            mediaPlayer.PlaybackSession.BufferingStarted -= PlaybackSession_BufferingStarted;
+            mediaPlayer.PlaybackSession.BufferingProgressChanged -= PlaybackSession_BufferingProgressChanged;
+            mediaPlayer.PlaybackSession.BufferingEnded -= PlaybackSession_BufferingEnded;
+            mediaPlayer.MediaOpened -= MediaPlayer_MediaOpened;
+            mediaPlayer.MediaEnded -= MediaPlayer_MediaEnded;
+            mediaPlayer.MediaFailed -= MediaPlayer_MediaFailed;
+        }
         //private void btnBack_Click(object sender, RoutedEventArgs e)
         //{
         //    if (this.Frame.CanGoBack)
@@ -1927,12 +2001,7 @@ namespace AllLive.UWP.Views
         protected override void OnNavigatingFrom(NavigatingCancelEventArgs e)
         {
 
-            liveRoomVM.AddDanmaku -= LiveRoomVM_AddDanmaku;
-            liveRoomVM.ReconnectStatusChanged -= LiveRoomVM_ReconnectStatusChanged;
-            NetworkInformation.NetworkStatusChanged -= NetworkInformation_NetworkStatusChanged;
-            StopPlay();
-
-            Window.Current.CoreWindow.KeyDown -= CoreWindow_KeyDown;
+            CleanupLiveRoomPage();
 
             base.OnNavigatingFrom(e);
         }

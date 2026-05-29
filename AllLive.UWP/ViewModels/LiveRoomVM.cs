@@ -487,12 +487,11 @@ namespace AllLive.UWP.ViewModels
                          item.ShowCountdown = false;
                      }
                  });
-                scTimer?.Stop();
-                scTimer?.Dispose();
-                scTimer = null;
+                StopSCTimer();
             }
             else
             {
+                StopSCTimer();
                 _ = Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
                 {
                     foreach (var item in SuperChatMessages)
@@ -520,6 +519,13 @@ namespace AllLive.UWP.ViewModels
                 };
                 scTimer.Start();
             }
+        }
+
+        private void StopSCTimer()
+        {
+            scTimer?.Stop();
+            scTimer?.Dispose();
+            scTimer = null;
         }
 
         private void SetWindowTitle()
@@ -1328,7 +1334,9 @@ namespace AllLive.UWP.ViewModels
             CancelDanmakuReconnect();
             System.Threading.Interlocked.Exchange(ref reconnectInProgress, 0);
             danmakuReconnectAttempt = 0;
+            StopSCTimer();
             Messages.Clear();
+            SuperChatMessages.Clear();
             if (LiveDanmaku != null)
             {
                 LiveDanmaku.NewMessage -= LiveDanmaku_NewMessage;
