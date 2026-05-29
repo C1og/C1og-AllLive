@@ -55,13 +55,6 @@ namespace AllLive.UWP.Views
 
         }
 
-        protected override void OnNavigatedTo(NavigationEventArgs e)
-        {
-            base.OnNavigatedTo(e);
-            SubscribeBiliAccountChanged();
-            UpdateBiliAccountUi();
-        }
-
         protected override void OnNavigatedFrom(NavigationEventArgs e)
         {
             UnsubscribeBiliAccountChanged();
@@ -957,6 +950,8 @@ namespace AllLive.UWP.Views
         protected override void OnNavigatedTo(NavigationEventArgs e)
         {
             base.OnNavigatedTo(e);
+            SubscribeBiliAccountChanged();
+            UpdateBiliAccountUi();
             version.Text = $"{SystemInformation.Instance.ApplicationVersion.Major}.{SystemInformation.Instance.ApplicationVersion.Minor}.{SystemInformation.Instance.ApplicationVersion.Build}";
         }
         private void RemoveLiveDanmuWord_Click(object sender, RoutedEventArgs e)
