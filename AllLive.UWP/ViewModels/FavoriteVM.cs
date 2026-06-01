@@ -98,6 +98,10 @@ namespace AllLive.UWP.ViewModels
                 {
                     return;
                 }
+                if (!loadRoomDetail)
+                {
+                    PreserveExistingLiveTitles(list);
+                }
                 if (list.Count == 0)
                 {
                     ApplySortAndFilter(list);
@@ -127,6 +131,34 @@ namespace AllLive.UWP.ViewModels
                     LoaddingLiveStatus = false;
                 }
             }
+        }
+
+        private void PreserveExistingLiveTitles(IList<FavoriteItem> items)
+        {
+            if (items == null || Items == null || Items.Count == 0)
+            {
+                return;
+            }
+            var titleMap = Items
+                .Where(x => !string.IsNullOrWhiteSpace(x.LiveTitle))
+                .GroupBy(GetFavoriteItemKey)
+                .ToDictionary(x => x.Key, x => x.First().LiveTitle);
+            if (titleMap.Count == 0)
+            {
+                return;
+            }
+            foreach (var item in items)
+            {
+                if (titleMap.TryGetValue(GetFavoriteItemKey(item), out var title))
+                {
+                    item.LiveTitle = title;
+                }
+            }
+        }
+
+        private static string GetFavoriteItemKey(FavoriteItem item)
+        {
+            return $"{item?.SiteName}|{item?.RoomID}";
         }
 
         private async Task UpdateLiveStatusAsync(IList<FavoriteItem> items, int refreshVersion, bool loadRoomDetail)
