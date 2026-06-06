@@ -412,33 +412,36 @@ namespace AllLive.Core
         private async Task<List<string>> GetPlayUrlsNew(string roomID, object qn)
         {
             var qnValue = TryConvertToInt(qn);
-            var urls = new List<string>();
-            var dedupe = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             var client = await CreateBilibiliPlayInfoHttpClientAsync();
             using (client)
             {
                 var obj = await RequestBilibiliPlayInfoAsync(client, roomID, qnValue, "0");
                 var playurl = obj?["data"]?["playurl_info"]?["playurl"];
-                var candidates = OrderBilibiliPlayUrlCandidates(ParseBilibiliPlayUrlCandidates(playurl));
+                var candidates = ParseBilibiliPlayUrlCandidates(playurl);
+                LogBilibiliCandidateSummary(roomID, qnValue, candidates, "AVC");
                 if (candidates.Count == 0)
                 {
                     CoreDebug.Log($"[Bilibili] AVC播放流为空，尝试HEVC兜底 roomId={roomID} qn={qnValue?.ToString() ?? "null"}");
                     obj = await RequestBilibiliPlayInfoAsync(client, roomID, qnValue, "0,1");
                     playurl = obj?["data"]?["playurl_info"]?["playurl"];
-                    candidates = OrderBilibiliPlayUrlCandidates(ParseBilibiliPlayUrlCandidates(playurl));
+                    candidates = ParseBilibiliPlayUrlCandidates(playurl);
+                    LogBilibiliCandidateSummary(roomID, qnValue, candidates, "AVC+HEVC");
                 }
-                foreach (var candidate in candidates)
+
+                var selectedCandidates = await SelectBilibiliPlayUrlCandidatesAsync(client, roomID, qnValue, candidates);
+                var urls = new List<string>();
+                var dedupe = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var candidate in selectedCandidates)
                 {
                     if (dedupe.Add(candidate.Url))
                     {
                         urls.Add(candidate.Url);
                     }
                 }
-                CoreDebug.Log($"[Bilibili] PlayInfo直出 roomId={roomID} qn={qnValue?.ToString() ?? "null"} total={urls.Count} hevc={candidates.Count(x => x.IsHevc)}");
+                CoreDebug.Log($"[Bilibili] PlayInfo直出 roomId={roomID} qn={qnValue?.ToString() ?? "null"} total={urls.Count} flv={selectedCandidates.Count(x => x.IsFlv)} hls={selectedCandidates.Count(x => x.IsHls)} hevc={selectedCandidates.Count(x => x.IsHevc)}");
+                return urls;
             }
-
-            return urls;
         }
         /// <summary>
         /// 旧的获取播放地址方式，部分直播看不了
@@ -466,9 +469,15 @@ namespace AllLive.Core
         private sealed class BilibiliPlayUrlCandidate
         {
             public string Url { get; set; }
+            public string ProtocolName { get; set; }
+            public string FormatName { get; set; }
+            public string CodecName { get; set; }
             public bool IsFlv { get; set; }
             public bool IsHls { get; set; }
             public bool IsHevc { get; set; }
+            public bool IsMcdn { get; set; }
+            public int Order { get; set; }
+            public int Score { get; set; }
         }
 
         private async Task<HttpClient> CreateBilibiliPlayInfoHttpClientAsync()
@@ -495,9 +504,9 @@ namespace AllLive.Core
             {
                 { "room_id", roomID },
                 { "protocol", "0,1" },
-                { "format", "0,2" },
+                { "format", "0,1,2" },
                 { "codec", string.IsNullOrWhiteSpace(codec) ? "0" : codec },
-                { "platform", "web" },
+                { "platform", "html5" },
                 { "dolby", "5" },
             };
             if (qn.HasValue)
@@ -586,9 +595,15 @@ namespace AllLive.Core
                             result.Add(new BilibiliPlayUrlCandidate()
                             {
                                 Url = url,
+                                ProtocolName = protocolName,
+                                FormatName = formatName,
+                                CodecName = codecName,
                                 IsFlv = isFlv,
                                 IsHls = isHls,
                                 IsHevc = codecName.IndexOf("hevc", StringComparison.OrdinalIgnoreCase) >= 0,
+                                IsMcdn = IsBilibiliMcdn(url),
+                                Order = GetBilibiliUrlOrder(url),
+                                Score = GetBilibiliUrlScore(url),
                             });
                         }
                     }
@@ -596,6 +611,54 @@ namespace AllLive.Core
             }
 
             return result;
+        }
+
+        private async Task<List<BilibiliPlayUrlCandidate>> SelectBilibiliPlayUrlCandidatesAsync(HttpClient client, string roomID, int? qnValue, List<BilibiliPlayUrlCandidate> candidates)
+        {
+            var ordered = OrderBilibiliPlayUrlCandidates(candidates);
+            var flvCandidates = ordered.Where(x => x.IsFlv).ToList();
+            if (flvCandidates.Count > 0)
+            {
+                CoreDebug.Log($"[Bilibili] 选择FLV优先流 roomId={roomID} qn={qnValue?.ToString() ?? "null"} flv={flvCandidates.Count} first={BuildBilibiliUrlBrief(flvCandidates[0])}");
+                return ordered;
+            }
+
+            var hlsCandidates = ordered.Where(x => x.IsHls).ToList();
+            if (hlsCandidates.Count == 0)
+            {
+                CoreDebug.Log($"[Bilibili] 未获得FLV或HLS候选 roomId={roomID} qn={qnValue?.ToString() ?? "null"} total={ordered.Count}");
+                return ordered;
+            }
+
+            CoreDebug.Log($"[Bilibili] 未获得FLV，使用HLS fallback roomId={roomID} qn={qnValue?.ToString() ?? "null"} hls={hlsCandidates.Count}");
+            var preferred = hlsCandidates.Where(x => IsPreferredBilibiliHlsHost(x.Url)).ToList();
+            var others = hlsCandidates.Where(x => !IsPreferredBilibiliHlsHost(x.Url)).ToList();
+            var selected = new List<BilibiliPlayUrlCandidate>();
+
+            AppendUniqueCandidates(selected, await VerifyBilibiliHlsCandidatesAsync(client, roomID, preferred));
+            if (selected.Count == 0)
+            {
+                AppendUniqueCandidates(selected, await VerifyBilibiliHlsCandidatesAsync(client, roomID, others));
+            }
+
+            if (selected.Count > 0)
+            {
+                AppendUniqueCandidates(selected, hlsCandidates);
+                CoreDebug.Log($"[Bilibili] HLS fallback已探测可用 roomId={roomID} qn={qnValue?.ToString() ?? "null"} first={BuildBilibiliUrlBrief(selected[0])}");
+                return selected;
+            }
+
+            CoreDebug.Log($"[Bilibili] HLS fallback探测无成功候选，保留原候选顺序 roomId={roomID} qn={qnValue?.ToString() ?? "null"} hls={hlsCandidates.Count}");
+            return hlsCandidates;
+        }
+
+        private static void LogBilibiliCandidateSummary(string roomID, int? qnValue, List<BilibiliPlayUrlCandidate> candidates, string stage)
+        {
+            var total = candidates?.Count ?? 0;
+            var flv = candidates?.Count(x => x.IsFlv) ?? 0;
+            var hls = candidates?.Count(x => x.IsHls) ?? 0;
+            var hevc = candidates?.Count(x => x.IsHevc) ?? 0;
+            CoreDebug.Log($"[Bilibili] PlayInfo候选 roomId={roomID} qn={qnValue?.ToString() ?? "null"} stage={stage} total={total} flv={flv} hls={hls} hevc={hevc}");
         }
 
         private static List<int> GetBilibiliAcceptQnList(JToken playurl)
@@ -647,44 +710,48 @@ namespace AllLive.Core
             return result;
         }
 
-        private async Task<List<string>> VerifyBilibiliHlsCandidatesAsync(HttpClient client, string roomID, IEnumerable<string> urls)
+        private async Task<List<BilibiliPlayUrlCandidate>> VerifyBilibiliHlsCandidatesAsync(HttpClient client, string roomID, IEnumerable<BilibiliPlayUrlCandidate> candidates)
         {
-            var verified = new List<string>();
-            foreach (var url in urls.Where(x => !string.IsNullOrWhiteSpace(x)).Take(4))
+            var verified = new List<BilibiliPlayUrlCandidate>();
+            foreach (var candidate in candidates.Where(x => !string.IsNullOrWhiteSpace(x?.Url)).Take(4))
             {
                 try
                 {
-                    using (var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead))
+                    using (var response = await client.GetAsync(candidate.Url, HttpCompletionOption.ResponseHeadersRead))
                     {
                         if (response.IsSuccessStatusCode)
                         {
-                            verified.Add(url);
+                            verified.Add(candidate);
+                        }
+                        else
+                        {
+                            CoreDebug.Log($"[Bilibili] HLS探测返回异常 roomId={roomID} status={(int)response.StatusCode} url={BuildBilibiliUrlBrief(candidate)}");
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    CoreDebug.Log($"[Bilibili] HLS探测失败 roomId={roomID} url={url} err={ex.GetType().FullName} {ex.Message}");
+                    CoreDebug.Log($"[Bilibili] HLS探测失败 roomId={roomID} url={BuildBilibiliUrlBrief(candidate)} err={ex.GetType().FullName} {ex.Message}");
                 }
             }
             return verified;
         }
 
-        private static void AppendUniqueUrls(List<string> target, IEnumerable<string> urls)
+        private static void AppendUniqueCandidates(List<BilibiliPlayUrlCandidate> target, IEnumerable<BilibiliPlayUrlCandidate> candidates)
         {
-            if (target == null || urls == null)
+            if (target == null || candidates == null)
             {
                 return;
             }
 
-            var seen = new HashSet<string>(target, StringComparer.OrdinalIgnoreCase);
-            foreach (var url in urls)
+            var seen = new HashSet<string>(target.Where(x => x != null).Select(x => x.Url), StringComparer.OrdinalIgnoreCase);
+            foreach (var candidate in candidates)
             {
-                if (string.IsNullOrWhiteSpace(url) || !seen.Add(url))
+                if (string.IsNullOrWhiteSpace(candidate?.Url) || !seen.Add(candidate.Url))
                 {
                     continue;
                 }
-                target.Add(url);
+                target.Add(candidate);
             }
         }
 
@@ -735,11 +802,13 @@ namespace AllLive.Core
                 {
                     url,
                     index,
+                    flvPenalty = IsBilibiliFlvUrl(url) ? 0 : 1,
                     mcdnPenalty = IsBilibiliMcdn(url) ? 1 : 0,
                     order = GetBilibiliUrlOrder(url),
                     score = GetBilibiliUrlScore(url)
                 })
-                .OrderBy(x => x.mcdnPenalty)
+                .OrderBy(x => x.flvPenalty)
+                .ThenBy(x => x.mcdnPenalty)
                 .ThenBy(x => x.order)
                 .ThenByDescending(x => x.score)
                 .ThenBy(x => x.index)
@@ -760,17 +829,24 @@ namespace AllLive.Core
                     candidate,
                     index,
                     codecPenalty = candidate.IsHevc ? 1 : 0,
-                    mcdnPenalty = IsBilibiliMcdn(candidate.Url) ? 1 : 0,
-                    order = GetBilibiliUrlOrder(candidate.Url),
-                    score = GetBilibiliUrlScore(candidate.Url)
+                    flvPenalty = candidate.IsFlv ? 0 : 1,
+                    mcdnPenalty = candidate.IsMcdn ? 1 : 0,
+                    order = candidate.Order,
+                    score = candidate.Score
                 })
                 .OrderBy(x => x.codecPenalty)
+                .ThenBy(x => x.flvPenalty)
                 .ThenBy(x => x.mcdnPenalty)
                 .ThenBy(x => x.order)
                 .ThenByDescending(x => x.score)
                 .ThenBy(x => x.index)
                 .Select(x => x.candidate)
                 .ToList();
+        }
+
+        private static bool IsBilibiliFlvUrl(string url)
+        {
+            return !string.IsNullOrWhiteSpace(url) && url.IndexOf(".flv", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private static bool IsBilibiliMcdn(string url)
@@ -852,6 +928,22 @@ namespace AllLive.Core
             }
 
             return score;
+        }
+
+        private static string BuildBilibiliUrlBrief(BilibiliPlayUrlCandidate candidate)
+        {
+            if (candidate == null)
+            {
+                return "null";
+            }
+
+            var url = candidate.Url ?? string.Empty;
+            if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            {
+                return $"{uri.Host}{uri.AbsolutePath} format={candidate.FormatName} protocol={candidate.ProtocolName} codec={candidate.CodecName} order={candidate.Order} score={candidate.Score}";
+            }
+
+            return $"len={url.Length} format={candidate.FormatName} protocol={candidate.ProtocolName} codec={candidate.CodecName} order={candidate.Order} score={candidate.Score}";
         }
 
         public async Task<bool> GetLiveStatus(object roomId)
