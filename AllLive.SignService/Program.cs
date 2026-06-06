@@ -5,17 +5,143 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Http.Headers;
 
 var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
 
 app.Urls.Add("http://0.0.0.0:8788");
+app.Urls.Add("http://127.0.0.1:8789");
 
 const string DouyinVersionCode = "180800";
 const string DouyinSdkVersion = "1.0.14-beta.0";
+const string BilibiliProxyUrl = "http://127.0.0.1:8789/api/bilibili/live.flv";
 var douyinWebmssdkScript = new Lazy<string>(LoadDouyinWebmssdkScript);
+var bilibiliStreamLock = new object();
+BilibiliStreamState? latestBilibiliStream = null;
+var bilibiliProxyHttpClient = CreateBilibiliProxyHttpClient();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+
+app.MapPost("/api/bilibili/stream", async (HttpRequest request) =>
+{
+    if (!IsBilibiliProxyRequest(request))
+    {
+        return Results.NotFound();
+    }
+
+    BilibiliStreamRequest? payload;
+    try
+    {
+        payload = await request.ReadFromJsonAsync<BilibiliStreamRequest>();
+    }
+    catch
+    {
+        return Results.Json(new { code = -1, msg = "invalid json" });
+    }
+
+    var upstreamUrl = payload?.url ?? string.Empty;
+    if (!Uri.TryCreate(upstreamUrl, UriKind.Absolute, out var upstreamUri)
+        || (upstreamUri.Scheme != Uri.UriSchemeHttp && upstreamUri.Scheme != Uri.UriSchemeHttps))
+    {
+        return Results.Json(new { code = -1, msg = "invalid url" });
+    }
+
+    var state = new BilibiliStreamState(
+        upstreamUrl,
+        string.IsNullOrWhiteSpace(payload?.referer) ? "https://live.bilibili.com/" : payload.referer!,
+        string.IsNullOrWhiteSpace(payload?.userAgent) ? GetDefaultUserAgent() : payload.userAgent!,
+        payload?.cookie ?? string.Empty);
+
+    lock (bilibiliStreamLock)
+    {
+        latestBilibiliStream = state;
+    }
+
+    app.Logger.LogInformation("[BilibiliProxy] Registered upstream {Upstream}", BuildBilibiliStreamBrief(state.Url));
+    return Results.Json(new { code = 0, data = new { url = BilibiliProxyUrl }, msg = "" });
+});
+
+app.MapGet("/api/bilibili/live.flv", async (HttpContext context) =>
+{
+    if (!IsBilibiliProxyRequest(context.Request))
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+
+    BilibiliStreamState? state;
+    lock (bilibiliStreamLock)
+    {
+        state = latestBilibiliStream;
+    }
+
+    if (state == null)
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        await context.Response.WriteAsync("bilibili stream not registered", context.RequestAborted);
+        return;
+    }
+
+    try
+    {
+        using var upstreamRequest = new HttpRequestMessage(HttpMethod.Get, state.Url);
+        upstreamRequest.Headers.TryAddWithoutValidation("User-Agent", state.UserAgent);
+        upstreamRequest.Headers.TryAddWithoutValidation("Referer", state.Referer);
+        upstreamRequest.Headers.TryAddWithoutValidation("Accept", "video/x-flv,application/octet-stream,*/*");
+        upstreamRequest.Headers.TryAddWithoutValidation("Connection", "keep-alive");
+        if (!string.IsNullOrWhiteSpace(state.Cookie))
+        {
+            upstreamRequest.Headers.TryAddWithoutValidation("Cookie", state.Cookie);
+        }
+
+        upstreamRequest.Headers.Range = new RangeHeaderValue(0, null);
+
+        using var upstreamResponse = await bilibiliProxyHttpClient.SendAsync(
+            upstreamRequest,
+            HttpCompletionOption.ResponseHeadersRead,
+            context.RequestAborted);
+
+        context.Response.StatusCode = (int)upstreamResponse.StatusCode;
+        context.Response.Headers.CacheControl = "no-store";
+
+        if (!upstreamResponse.IsSuccessStatusCode)
+        {
+            app.Logger.LogWarning(
+                "[BilibiliProxy] Upstream returned {StatusCode} for {Upstream}",
+                (int)upstreamResponse.StatusCode,
+                BuildBilibiliStreamBrief(state.Url));
+            return;
+        }
+
+        context.Response.ContentType = "video/x-flv";
+        CopyLongHeader(upstreamResponse.Content.Headers.ContentLength, value => context.Response.ContentLength = value);
+        CopyStringHeader(upstreamResponse.Content.Headers.ContentRange?.ToString(), value => context.Response.Headers.ContentRange = value);
+        CopyStringHeader(upstreamResponse.Content.Headers.LastModified?.ToString("R"), value => context.Response.Headers.LastModified = value);
+        CopyListHeader(upstreamResponse.Headers.AcceptRanges, value => context.Response.Headers.AcceptRanges = value);
+
+        await using var stream = await upstreamResponse.Content.ReadAsStreamAsync(context.RequestAborted);
+        await stream.CopyToAsync(context.Response.Body, 81920, context.RequestAborted);
+    }
+    catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+    {
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(
+            "[BilibiliProxy] Proxy failed for {Upstream}: {Error}",
+            BuildBilibiliStreamBrief(state.Url),
+            BuildExceptionBrief(ex, state.Url));
+        if (!context.Response.HasStarted)
+        {
+            context.Response.StatusCode = StatusCodes.Status502BadGateway;
+            context.Response.ContentType = "text/plain";
+            context.Response.Headers.CacheControl = "no-store";
+            await context.Response.WriteAsync("bilibili proxy upstream failed", context.RequestAborted);
+        }
+    }
+});
 
 app.MapPost("/api/douyu/sign", async (HttpRequest request) =>
 {
@@ -327,6 +453,89 @@ static string EscapeJs(string value)
     return value.Replace("\\", "\\\\").Replace("'", "\\'");
 }
 
+static HttpClient CreateBilibiliProxyHttpClient()
+{
+    var handler = new HttpClientHandler()
+    {
+        AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
+        UseProxy = false,
+    };
+
+    return new HttpClient(handler)
+    {
+        Timeout = Timeout.InfiniteTimeSpan,
+    };
+}
+
+static bool IsBilibiliProxyRequest(HttpRequest request)
+{
+    if (request.HttpContext.Connection.LocalPort != 8789)
+    {
+        return false;
+    }
+
+    var remoteIp = request.HttpContext.Connection.RemoteIpAddress;
+    return remoteIp == null || IPAddress.IsLoopback(remoteIp);
+}
+
+static void CopyLongHeader(long? value, Action<long> assign)
+{
+    if (value.HasValue)
+    {
+        assign(value.Value);
+    }
+}
+
+static void CopyStringHeader(string? value, Action<string> assign)
+{
+    if (!string.IsNullOrWhiteSpace(value))
+    {
+        assign(value);
+    }
+}
+
+static void CopyListHeader(IEnumerable<string> values, Action<string> assign)
+{
+    var value = values == null ? string.Empty : string.Join(",", values.Where(x => !string.IsNullOrWhiteSpace(x)));
+    if (!string.IsNullOrWhiteSpace(value))
+    {
+        assign(value);
+    }
+}
+
+static string BuildBilibiliStreamBrief(string url)
+{
+    if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+    {
+        return $"{uri.Host}{uri.AbsolutePath}";
+    }
+
+    return $"len={url?.Length ?? 0}";
+}
+
+static string BuildExceptionBrief(Exception ex, string sensitiveUrl)
+{
+    var message = ex?.Message ?? string.Empty;
+    if (!string.IsNullOrEmpty(sensitiveUrl))
+    {
+        message = message.Replace(sensitiveUrl, BuildBilibiliStreamBrief(sensitiveUrl));
+    }
+
+    if (message.Length > 300)
+    {
+        message = message.Substring(0, 300);
+    }
+
+    return $"{ex?.GetType().FullName}: {message}";
+}
+
+static string GetDefaultUserAgent()
+{
+    return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0";
+}
+
+record BilibiliStreamRequest(string url, string? referer, string? userAgent, string? cookie);
+record BilibiliStreamState(string Url, string Referer, string UserAgent, string Cookie);
 record DouyinSignRequest(string roomId, string uniqueId);
 record SignRequest(string html, string rid);
 record AbogusRequest(string url, string? userAgent, string? body);

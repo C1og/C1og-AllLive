@@ -430,15 +430,7 @@ namespace AllLive.Core
                 }
 
                 var selectedCandidates = await SelectBilibiliPlayUrlCandidatesAsync(client, roomID, qnValue, candidates);
-                var urls = new List<string>();
-                var dedupe = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var candidate in selectedCandidates)
-                {
-                    if (dedupe.Add(candidate.Url))
-                    {
-                        urls.Add(candidate.Url);
-                    }
-                }
+                var urls = await BuildBilibiliPlayUrlsWithLocalProxyAsync(roomID, qnValue, selectedCandidates);
                 CoreDebug.Log($"[Bilibili] PlayInfo直出 roomId={roomID} qn={qnValue?.ToString() ?? "null"} total={urls.Count} flv={selectedCandidates.Count(x => x.IsFlv)} hls={selectedCandidates.Count(x => x.IsHls)} hevc={selectedCandidates.Count(x => x.IsHevc)}");
                 return urls;
             }
@@ -650,6 +642,50 @@ namespace AllLive.Core
 
             CoreDebug.Log($"[Bilibili] HLS fallback探测无成功候选，保留原候选顺序 roomId={roomID} qn={qnValue?.ToString() ?? "null"} hls={hlsCandidates.Count}");
             return hlsCandidates;
+        }
+
+        private async Task<List<string>> BuildBilibiliPlayUrlsWithLocalProxyAsync(string roomID, int? qnValue, List<BilibiliPlayUrlCandidate> selectedCandidates)
+        {
+            var urls = new List<string>();
+            var dedupe = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var firstFlv = selectedCandidates?.FirstOrDefault(x => x != null && x.IsFlv && !string.IsNullOrWhiteSpace(x.Url));
+
+            if (firstFlv != null)
+            {
+                var headers = await GetRequestHeader();
+                var proxyResult = await BilibiliLocalFlvProxyClient.RegisterAsync(firstFlv.Url, headers);
+                if (proxyResult.Success && !string.IsNullOrWhiteSpace(proxyResult.Url))
+                {
+                    if (dedupe.Add(proxyResult.Url))
+                    {
+                        urls.Add(proxyResult.Url);
+                    }
+                    CoreDebug.Log($"[Bilibili] 选择本地FLV代理 roomId={roomID} qn={qnValue?.ToString() ?? "null"} upstream={BuildBilibiliUrlBrief(firstFlv)} proxy={BuildBilibiliLocalProxyBrief(proxyResult.Url)}");
+                }
+                else
+                {
+                    CoreDebug.Log($"[Bilibili] 本地FLV代理不可用，回退上游FLV roomId={roomID} qn={qnValue?.ToString() ?? "null"} upstream={BuildBilibiliUrlBrief(firstFlv)} err={proxyResult.Error}");
+                }
+            }
+            else
+            {
+                CoreDebug.Log($"[Bilibili] 未获得FLV，无法使用本地代理 roomId={roomID} qn={qnValue?.ToString() ?? "null"} total={selectedCandidates?.Count ?? 0}");
+            }
+
+            foreach (var candidate in selectedCandidates ?? new List<BilibiliPlayUrlCandidate>())
+            {
+                if (string.IsNullOrWhiteSpace(candidate?.Url))
+                {
+                    continue;
+                }
+
+                if (dedupe.Add(candidate.Url))
+                {
+                    urls.Add(candidate.Url);
+                }
+            }
+
+            return urls;
         }
 
         private static void LogBilibiliCandidateSummary(string roomID, int? qnValue, List<BilibiliPlayUrlCandidate> candidates, string stage)
@@ -944,6 +980,16 @@ namespace AllLive.Core
             }
 
             return $"len={url.Length} format={candidate.FormatName} protocol={candidate.ProtocolName} codec={candidate.CodecName} order={candidate.Order} score={candidate.Score}";
+        }
+
+        private static string BuildBilibiliLocalProxyBrief(string url)
+        {
+            if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            {
+                return $"{uri.Host}:{uri.Port}{uri.AbsolutePath}";
+            }
+
+            return $"len={url?.Length ?? 0}";
         }
 
         public async Task<bool> GetLiveStatus(object roomId)
