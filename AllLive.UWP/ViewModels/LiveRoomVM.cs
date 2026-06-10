@@ -148,9 +148,9 @@ namespace AllLive.UWP.ViewModels
                 }
                 if (Popularity.HasValue)
                 {
-                    if (SiteName == "抖音直播" && Living)
+                    if ((SiteName == "抖音直播" || SiteName == "哔哩哔哩直播") && Living)
                     {
-                        return "当前显示: 人气/热度，弹幕连接成功后会自动切换为在线人数";
+                        return "当前显示: 人气/热度，弹幕连接成功后会自动切换为直播间观众数";
                     }
                     return "当前显示: 人气/热度；该平台暂未接入或尚未确认真实在线人数接口";
                 }
@@ -186,8 +186,32 @@ namespace AllLive.UWP.ViewModels
             }
         }
 
-        private void ApplyAudienceMetricUpdate(long value)
+        private void ApplyAudienceMetricUpdate(LiveMessage message)
         {
+            if (message == null)
+            {
+                return;
+            }
+
+            var value = Convert.ToInt64(message.Data);
+            switch (message.AudienceMetricKind)
+            {
+                case LiveAudienceMetricKind.ViewerCount:
+                    ViewerCount = value;
+                    if (detail != null)
+                    {
+                        detail.ViewerCount = value;
+                    }
+                    return;
+                case LiveAudienceMetricKind.Popularity:
+                    Popularity = value;
+                    if (detail != null)
+                    {
+                        detail.Popularity = value;
+                    }
+                    return;
+            }
+
             switch (SiteName)
             {
                 case "抖音直播":
@@ -1206,7 +1230,7 @@ namespace AllLive.UWP.ViewModels
                 }
                 if (e.Type == LiveMessageType.Online)
                 {
-                    ApplyAudienceMetricUpdate(Convert.ToInt64(e.Data));
+                    ApplyAudienceMetricUpdate(e);
                     return;
                 }
                 if (e.Type == LiveMessageType.SuperChat)

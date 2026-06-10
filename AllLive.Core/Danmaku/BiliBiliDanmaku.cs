@@ -276,6 +276,7 @@ namespace AllLive.Core.Danmaku
                 NewMessage?.Invoke(this, new LiveMessage()
                 {
                     Data = online,
+                    AudienceMetricKind = LiveAudienceMetricKind.Popularity,
                     Type = LiveMessageType.Online,
                 });
             }
@@ -301,8 +302,24 @@ namespace AllLive.Core.Danmaku
             try
             {
                 var obj = JObject.Parse(jsonMessage);
-                var cmd = obj["cmd"].ToString();
-                if (cmd.Contains("DANMU_MSG"))
+                var cmd = obj["cmd"]?.ToString() ?? "";
+                if (cmd == "ONLINE_RANK_COUNT")
+                {
+                    var viewerCount = obj["data"]?["online_count_text"].ParseCountTextToLong()
+                        ?? obj["data"]?["count_text"].ParseCountTextToLong()
+                        ?? obj["data"]?["online_count"].ParseCountTextToLong()
+                        ?? obj["data"]?["count"].ParseCountTextToLong();
+                    if (viewerCount.HasValue)
+                    {
+                        NewMessage?.Invoke(this, new LiveMessage()
+                        {
+                            Data = viewerCount.Value,
+                            AudienceMetricKind = LiveAudienceMetricKind.ViewerCount,
+                            Type = LiveMessageType.Online,
+                        });
+                    }
+                }
+                else if (cmd.Contains("DANMU_MSG"))
                 {
                     if (obj["info"] != null && obj["info"].ToArray().Length != 0)
                     {

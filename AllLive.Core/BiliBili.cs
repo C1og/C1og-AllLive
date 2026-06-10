@@ -160,39 +160,16 @@ namespace AllLive.Core
             var popularity = roomInfo["online"].ParseCountTextToLong() ?? 0;
             const string popularitySource = "getInfoByRoom.room_info.online";
             var isLive = roomInfo["live_status"].ToInt32() == 1;
-            var viewerCountFromApi = TryGetViewerCountFromApi(obj["data"]);
-            var viewerCountFromUid = (long?)null;
-            var viewerCountFromHtml = (long?)null;
-            var viewerCount = viewerCountFromApi;
-            var viewerCountSource = viewerCountFromApi.HasValue ? "getInfoByRoom.watched_show" : null;
-            if (!viewerCount.HasValue)
-            {
-                viewerCountFromUid = await TryGetViewerCountByUid(obj["data"]["anchor_info"]?["base_info"]?["uid"].ToString());
-                viewerCount = viewerCountFromUid;
-                if (viewerCount.HasValue)
-                {
-                    viewerCountSource = "get_status_info_by_uids.online";
-                }
-            }
-            if (!viewerCount.HasValue && isLive)
-            {
-                viewerCountFromHtml = await TryGetViewerCountFromHtml(roomId.ToString());
-                viewerCount = viewerCountFromHtml;
-                if (viewerCount.HasValue)
-                {
-                    viewerCountSource = "live_page.watched_show";
-                }
-            }
-            CoreDebug.Log($"[Bilibili] 人数来源 roomId={roomId} get_status_info_by_uids={FormatNullableLong(viewerCountFromUid)} watched_show={FormatNullableLong(viewerCountFromApi)} html_watched_show={FormatNullableLong(viewerCountFromHtml)} getInfoByRoom.room_info.online={popularity} chosenViewerCount={FormatNullableLong(viewerCount)} viewerCountSource={viewerCountSource ?? "null"}");
+            CoreDebug.Log($"[Bilibili] 房间详情人数 roomId={roomId} getInfoByRoom.room_info.online={popularity}; 真实房间观众数等待ONLINE_RANK_COUNT弹幕消息");
 
             return new LiveRoomDetail()
             {
                 Cover = roomInfo["cover"].ToString(),
                 Online = popularity > int.MaxValue ? int.MaxValue : (int)popularity,
                 Popularity = popularity,
-                ViewerCount = viewerCount,
+                ViewerCount = null,
                 PopularitySource = popularitySource,
-                ViewerCountSource = viewerCountSource,
+                ViewerCountSource = null,
                 RoomID = roomInfo["room_id"].ToString(),
                 Title = roomInfo["title"].ToString(),
                 UserName = obj["data"]["anchor_info"]["base_info"]["uname"].ToString(),
@@ -208,74 +185,6 @@ namespace AllLive.Core
                 },
                 Url = "https://live.bilibili.com/" + roomId
             };
-        }
-
-        private static long? TryGetViewerCountFromApi(JToken data)
-        {
-            if (data == null)
-            {
-                return null;
-            }
-
-            return data["watched_show"]?["num"].ParseCountTextToLong()
-                ?? data["watched_show"]?["text_small"].ParseCountTextToLong()
-                ?? data["watched_show"]?["text_large"].ParseCountTextToLong()
-                ?? data["room_info"]?["watched_show"]?["num"].ParseCountTextToLong()
-                ?? data["room_info"]?["watched_show"]?["text_small"].ParseCountTextToLong()
-                ?? data["room_info"]?["watched_show"]?["text_large"].ParseCountTextToLong();
-        }
-
-        private async Task<long?> TryGetViewerCountByUid(string uid)
-        {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(uid))
-                {
-                    return null;
-                }
-
-                var result = await HttpUtil.GetString($"https://api.live.bilibili.com/room/v1/Room/get_status_info_by_uids?uids[]={uid}", headers: await GetRequestHeader());
-                var obj = JObject.Parse(result);
-                return obj["data"]?[uid]?["online"].ParseCountTextToLong();
-            }
-            catch (Exception ex)
-            {
-                CoreDebug.Log($"[Bilibili] 通过uid读取在线人数失败 uid={uid} err={ex.GetType().FullName}: {ex.Message}");
-                return null;
-            }
-        }
-
-        private async Task<long?> TryGetViewerCountFromHtml(string roomId)
-        {
-            try
-            {
-                var html = await HttpUtil.GetString($"https://live.bilibili.com/{roomId}", headers: await GetRequestHeader());
-                if (string.IsNullOrWhiteSpace(html))
-                {
-                    return null;
-                }
-
-                var watchedShowJson = html.MatchTextSingleline(@"""watched_show"":(\{.*?\})", "");
-                if (string.IsNullOrWhiteSpace(watchedShowJson))
-                {
-                    return null;
-                }
-
-                var watchedShow = JObject.Parse(watchedShowJson);
-                return watchedShow["num"].ParseCountTextToLong()
-                    ?? watchedShow["text_small"].ParseCountTextToLong()
-                    ?? watchedShow["text_large"].ParseCountTextToLong();
-            }
-            catch (Exception ex)
-            {
-                CoreDebug.Log($"[Bilibili] 读取观看人数失败 roomId={roomId} err={ex.GetType().FullName}: {ex.Message}");
-                return null;
-            }
-        }
-
-        private static string FormatNullableLong(long? value)
-        {
-            return value.HasValue ? value.Value.ToString() : "null";
         }
         public async Task<LiveSearchResult> Search(string keyword, int page = 1)
         {

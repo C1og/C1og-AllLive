@@ -25,6 +25,14 @@ namespace AllLive.Core.Models
         /// </summary>
         SuperChat
     }
+
+    public enum LiveAudienceMetricKind
+    {
+        Unknown,
+        ViewerCount,
+        Popularity
+    }
+
     public class LiveMessage
     {
         /// <summary>
@@ -44,6 +52,10 @@ namespace AllLive.Core.Models
         /// 单Type=Online时，Data 为房间统计值(long)，具体语义由平台决定
         /// </summary>
         public object Data { get; set; }
+        /// <summary>
+        /// 单Type=Online时，标记 Data 是真实观众数还是平台热度/人气
+        /// </summary>
+        public LiveAudienceMetricKind AudienceMetricKind { get; set; } = LiveAudienceMetricKind.Unknown;
         /// <summary>
         /// 弹幕颜色
         /// </summary>
