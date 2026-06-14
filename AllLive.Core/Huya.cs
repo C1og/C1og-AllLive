@@ -212,20 +212,28 @@ namespace AllLive.Core
             {
                 realRoomId = jsonObj["roomInfo"]["tProfileInfo"]["lProfileRoom"].ToInt32();
             }
+            var isLive = jsonObj["roomInfo"]["eLiveStatus"].ToInt32() == 2;
+            var popularity = jsonObj["roomInfo"]["tLiveInfo"]["lTotalCount"].ParseCountTextToLong() ?? 0;
+            var vipPresenterUid = TryGetVipPresenterUid(jsonObj["roomInfo"]);
+            var vipCount = isLive ? await GetVipCount(vipPresenterUid, uid) : null;
 
             return new LiveRoomDetail()
             {
                 Cover = jsonObj["roomInfo"]["tLiveInfo"]["sScreenshot"].ToString(),
-                Online = jsonObj["roomInfo"]["tLiveInfo"]["lTotalCount"].ToInt32(),
-                Popularity = jsonObj["roomInfo"]["tLiveInfo"]["lTotalCount"].ParseCountTextToLong(),
-                ViewerCount = TryGetViewerCount(jsonObj["roomInfo"]),
+                Online = ToCompatibleOnline(vipCount ?? popularity),
+                ViewerCount = null,
+                ViewerCountSource = null,
+                VipCount = vipCount,
+                VipCountSource = vipCount.HasValue ? "liveui.getVipBarListStat.iTotal/iTotalNum" : null,
+                Popularity = popularity,
+                PopularitySource = "m.huya.tLiveInfo.lTotalCount",
                 RoomID = realRoomId.ToString(),
                 Title = title,
                 UserName = jsonObj["roomInfo"]["tProfileInfo"]["sNick"].ToString(),
                 UserAvatar = jsonObj["roomInfo"]["tProfileInfo"]["sAvatar180"].ToString(),
                 Introduction = jsonObj["roomInfo"]["tLiveInfo"]["sIntroduction"].ToString(),
                 Notice = jsonObj["welcomeText"].ToString(),
-                Status = jsonObj["roomInfo"]["eLiveStatus"].ToInt32() == 2,
+                Status = isLive,
                 Data = new HuyaUrlDataModel()
                 {
                     Url = "https:" + Encoding.UTF8.GetString(Convert.FromBase64String(jsonObj["roomProfile"]["liveLineUrl"].ToString())),
@@ -243,18 +251,94 @@ namespace AllLive.Core
             };
         }
 
-        private static long? TryGetViewerCount(JToken roomInfo)
+        private async Task<long?> GetVipCount(long presenterUid, string uid)
         {
-            if (roomInfo == null)
+            if (presenterUid <= 0)
             {
+                CoreDebug.Log("[Huya] VipBarListStat skipped: presenter uid empty");
                 return null;
             }
 
-            return roomInfo["tLiveInfo"]?["viewerCount"].ParseCountTextToLong()
-                ?? roomInfo["tLiveInfo"]?["realTotalCount"].ParseCountTextToLong()
-                ?? roomInfo["tLiveInfo"]?["totalCount"].ParseCountTextToLong()
-                ?? roomInfo["tLiveInfo"]?["watchCount"].ParseCountTextToLong()
-                ?? roomInfo["tLiveInfo"]?["attendeeCount"].ParseCountTextToLong();
+            var userUid = uid.ToInt64();
+            var webResult = await GetVipCount(presenterUid, userUid, "webh5&0&websocket");
+            if (webResult.HasValue)
+            {
+                return webResult;
+            }
+
+            return await GetVipCount(presenterUid, userUid, "pc_exe&7060000&official");
+        }
+
+        private async Task<long?> GetVipCount(long presenterUid, long userUid, string huyaUa)
+        {
+            var req = new VipListStatReq()
+            {
+                lPid = presenterUid,
+                tUserId = new HuyaUserId()
+                {
+                    lUid = userUid,
+                    sHuYaUA = huyaUa
+                }
+            };
+
+            var resp = await tupHttpHelper.GetAsync(req, "getVipBarListStat", new VipBarListStatInfo());
+            var total = 0;
+            if (resp != null)
+            {
+                total = resp.iTotal > 0 ? resp.iTotal : resp.iTotalNum;
+            }
+            CoreDebug.Log($"[Huya] VipBarListStat pid={presenterUid} ua={huyaUa} respPid={resp?.lPid} iTotal={resp?.iTotal} iTotalNum={resp?.iTotalNum}");
+            if (resp != null && resp.lPid == presenterUid)
+            {
+                return Math.Max(0, total);
+            }
+            if (total > 0)
+            {
+                return total;
+            }
+            return null;
+        }
+
+        private static long TryGetVipPresenterUid(JToken roomInfo)
+        {
+            if (roomInfo == null)
+            {
+                return 0;
+            }
+
+            var candidates = new[]
+            {
+                roomInfo["tLiveInfo"]?["lUid"],
+                roomInfo["tLiveInfo"]?["lChannel"],
+                roomInfo["tLiveInfo"]?["lLiveChannel"],
+                roomInfo["tLiveInfo"]?["lChannelId"],
+                roomInfo["tProfileInfo"]?["lUid"],
+                roomInfo["tProfileInfo"]?["lPid"]
+            };
+
+            foreach (var candidate in candidates)
+            {
+                var value = candidate.ToInt64();
+                if (value > 0)
+                {
+                    return value;
+                }
+            }
+
+            return 0;
+        }
+
+        private static int ToCompatibleOnline(long value)
+        {
+            if (value <= 0)
+            {
+                return 0;
+            }
+            if (value > int.MaxValue)
+            {
+                return int.MaxValue;
+            }
+            return (int)value;
         }
 
         private async Task<JToken> GetRoomInfo(object roomId)

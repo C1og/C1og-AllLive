@@ -27,7 +27,7 @@ namespace AllLive.Core.Models
         /// </summary>
         public string UserAvatar { get; set; }
         /// <summary>
-        /// 兼容旧逻辑的统计值，建议新逻辑优先使用 ViewerCount / Popularity
+        /// 兼容旧逻辑的统计值，建议新逻辑优先使用 ViewerCount / VipCount / Popularity
         /// </summary>
         public int Online { get; set; }
         /// <summary>
@@ -39,6 +39,10 @@ namespace AllLive.Core.Models
         /// </summary>
         public long? Popularity { get; set; }
         /// <summary>
+        /// 贵宾数
+        /// </summary>
+        public long? VipCount { get; set; }
+        /// <summary>
         /// 在线人数来源
         /// </summary>
         public string ViewerCountSource { get; set; }
@@ -46,6 +50,10 @@ namespace AllLive.Core.Models
         /// 人气/热度来源
         /// </summary>
         public string PopularitySource { get; set; }
+        /// <summary>
+        /// 贵宾数来源
+        /// </summary>
+        public string VipCountSource { get; set; }
         /// <summary>
         /// 房间介绍
         /// </summary>

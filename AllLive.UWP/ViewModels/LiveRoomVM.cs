@@ -138,6 +138,22 @@ namespace AllLive.UWP.ViewModels
             }
         }
 
+        private long? _vipCount;
+        public long? VipCount
+        {
+            get { return _vipCount; }
+            private set
+            {
+                if (_vipCount == value)
+                {
+                    return;
+                }
+                _vipCount = value;
+                DoPropertyChanged(nameof(VipCount));
+                RefreshAudienceDisplay();
+            }
+        }
+
         public string AudienceMetricToolTip
         {
             get
@@ -145,6 +161,10 @@ namespace AllLive.UWP.ViewModels
                 if (ViewerCount.HasValue)
                 {
                     return "当前显示: 直播间在线人数";
+                }
+                if (VipCount.HasValue)
+                {
+                    return "当前显示: 贵宾数；虎牙真实在线人数接口尚未接入";
                 }
                 if (Popularity.HasValue)
                 {
@@ -160,7 +180,7 @@ namespace AllLive.UWP.ViewModels
 
         private void RefreshAudienceDisplay()
         {
-            var display = ViewerCount ?? Popularity ?? 0;
+            var display = ViewerCount ?? VipCount ?? Popularity ?? 0;
             if (_Online != display)
             {
                 _Online = display;
@@ -174,13 +194,15 @@ namespace AllLive.UWP.ViewModels
             if (roomDetail == null)
             {
                 ViewerCount = null;
+                VipCount = null;
                 Popularity = null;
                 return;
             }
 
             ViewerCount = roomDetail.ViewerCount;
+            VipCount = roomDetail.VipCount;
             Popularity = roomDetail.Popularity;
-            if (!ViewerCount.HasValue && !Popularity.HasValue && roomDetail.Online > 0)
+            if (!ViewerCount.HasValue && !VipCount.HasValue && !Popularity.HasValue && roomDetail.Online > 0)
             {
                 Popularity = roomDetail.Online;
             }
@@ -201,6 +223,13 @@ namespace AllLive.UWP.ViewModels
                     if (detail != null)
                     {
                         detail.ViewerCount = value;
+                    }
+                    return;
+                case LiveAudienceMetricKind.VipCount:
+                    VipCount = value;
+                    if (detail != null)
+                    {
+                        detail.VipCount = value;
                     }
                     return;
                 case LiveAudienceMetricKind.Popularity:
@@ -1280,9 +1309,11 @@ namespace AllLive.UWP.ViewModels
                 sb.AppendLine($"兼容显示值 Online: {roomDetail.Online}");
                 sb.AppendLine($"ViewerCount: {(roomDetail.ViewerCount.HasValue ? roomDetail.ViewerCount.Value.ToString() : "null")}");
                 sb.AppendLine($"ViewerCountSource: {roomDetail.ViewerCountSource ?? "null"}");
+                sb.AppendLine($"VipCount: {(roomDetail.VipCount.HasValue ? roomDetail.VipCount.Value.ToString() : "null")}");
+                sb.AppendLine($"VipCountSource: {roomDetail.VipCountSource ?? "null"}");
                 sb.AppendLine($"Popularity: {(roomDetail.Popularity.HasValue ? roomDetail.Popularity.Value.ToString() : "null")}");
                 sb.AppendLine($"PopularitySource: {roomDetail.PopularitySource ?? "null"}");
-                sb.AppendLine($"最终显示值 DisplayMetric: {(roomDetail.ViewerCount ?? roomDetail.Popularity ?? roomDetail.Online)}");
+                sb.AppendLine($"最终显示值 DisplayMetric: {(roomDetail.ViewerCount ?? roomDetail.VipCount ?? roomDetail.Popularity ?? roomDetail.Online)}");
                 sb.AppendLine($"链接: {roomDetail.Url}");
                 if (!string.IsNullOrWhiteSpace(roomDetail.Introduction))
                 {
@@ -1498,6 +1529,7 @@ namespace AllLive.UWP.ViewModels
             Living = false;
             IsFavorite = false;
             ViewerCount = null;
+            VipCount = null;
             Popularity = null;
             Loading = false;
 

@@ -30,6 +30,7 @@ namespace AllLive.Core.Models
     {
         Unknown,
         ViewerCount,
+        VipCount,
         Popularity
     }
 

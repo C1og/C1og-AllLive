@@ -155,6 +155,7 @@ namespace AllLive.Core.Danmaku
                             {
                                 Type = LiveMessageType.Online,
                                 Data = online,
+                                AudienceMetricKind = LiveAudienceMetricKind.Popularity,
                             });
                         }
                     }
